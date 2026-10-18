@@ -66,7 +66,11 @@ move them. It needs Go and Python 3. In a cloud session, fetch modules with
 CodeInstances.com is in `photozeitgeist/codeinstances.com`: the Hugo Launch
 template copied unchanged, with content and config values only. Pages: about,
 contact, quick start, download, reference. Posts: the launch, the category
-explainer, how it was tested, the name. Images are drawn into static/images.
+explainer, how it was tested, the name, AI agents, the open format, and five
+use scenarios tagged "case studies" (a flaky CI test, a runnable bug report,
+an AI agent run, a dependency upgrade, a metered API). Scenarios are
+illustrative: no invented customers or results. Images are drawn into
+static/images.
 Every number comes from `test/results/`; when a recording changes a number,
 update the site too.
 
