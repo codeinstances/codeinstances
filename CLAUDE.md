@@ -12,7 +12,7 @@ has the procedure and the checks to run afterwards.
 
 ## Where things stand
 
-v0.1.0 to v0.7.0 are the releases so far (all October 2026):
+v0.1.0 to v0.8.0 are the releases so far (all October 2026):
 Apache 2.0, CI on Linux and macOS plus a Windows smoke check, and automated
 releases with smoke-tested binaries for Linux, macOS and Windows. Pure Go,
 standard library only, no cgo.
@@ -51,7 +51,14 @@ only, no extra members, at most 16), `keys.go` (keygen, PKCS #8 keys refused
 when group/others can read them, trust files), commands `keygen`, `sign`,
 `verify -trust`, `record`/`fork -sign`, `serve -trust`, `pull -trust`;
 `sign` refuses files with members it doesn't know; docs/example-signed.instance
-is a test vector (seed 1..32).
+is a test vector (seed 1..32). v0.8.0 adds runs on demand: `store/runner.go`
+(POST /v1/instances/{id}/replay and /fork; `serve -run -run-trust`, a list
+apart from upload `-trust`; given answers only with `-run-answers`; forks
+kept only on request, capped by `-max-kept`, signed by the store's own `-sign`
+key, which may not be trusted; MinimalEnv, a fresh folder, process groups
+via `Isolate` (proc_unix.go), PR_SET_DUMPABLE on Linux, runs stopped with
+the store) and the `run` command. Two reviews shaped it; the README section
+"Running instances on demand" and its limits are the rules.
 The Go
 `hook` package records and replays clock and random values. The open file
 format is [docs/FORMAT.md](docs/FORMAT.md) (`codeinstances/0`); change it only
@@ -64,7 +71,7 @@ canonical id, atomic save), `internal/capture/` (the proxy), `internal/ca/`
 (per-run authority), `hook/`, `cmd/codeinstances/`, `examples/demo/` (the
 self-checking demo), `scripts/` (smoke check, release plan, record-tests).
 
-The README's "Limits in v0.7.0" section is the honest list of what isn't
+The README's "Limits in v0.8.0" section is the honest list of what isn't
 covered; keep it true.
 
 ## Long-range plan (agreed with the owner, October 2026)
@@ -83,7 +90,8 @@ Each phase adds one verb, ships as its own release and stands on its own:
 6. Fork an instance at a step and run on from there (done in v0.6.0).
 7. Proof: signed, tamper-evident instances (AI agent accountability, audit)
    (done in v0.7.0).
-8. Run instances on demand (FaaS sense). Optional, the heaviest.
+8. Run instances on demand (FaaS sense). Optional, the heaviest (done in
+   v0.8.0).
 
 Each release gets a plain-language post on the site. Agents are a use case,
 never the whole identity.
@@ -116,6 +124,5 @@ the site's posts, following that repo's CONTENT-PLAN.md (2.8).
 
 ## Next
 
-Phase 8 (run instances on demand, in the FaaS sense; optional, the heaviest)
-is the last item on the plan and not agreed yet. Agree it with the owner
-before it goes here.
+Every phase of the long-range plan is done. Nothing further is agreed; what
+comes next is decided with the owner before it goes here.

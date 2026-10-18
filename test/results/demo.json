@@ -1,8 +1,8 @@
 {
   "tool": {
-    "version": "0.7.0",
+    "version": "0.8.0",
     "format": "codeinstances/0",
-    "revision": "bbc71e6422ffc8e07a15b987461dfb67600ca8f8",
+    "revision": "457edeefe3d302f80cd53b85024446d923f361d5",
     "modified": true,
     "go": "go1.24.7",
     "os": "linux",
@@ -13,7 +13,7 @@
     {
       "name": "record finishes and keeps the exit code",
       "passed": true,
-      "detail": "exit 0 codeinstances: kept /tmp/codeinstances-demo-209470629/demo.instance (c5e0df3245e2: /tmp/tmp.h6PtKjmyto/bin/codeinstances-demo -child, exit 0, 23 calls, 5 values, 61 ms)"
+      "detail": "exit 0 codeinstances: kept /tmp/codeinstances-demo-1903062519/demo.instance (696ed12c8225: /tmp/tmp.gl9KBwqwYE/bin/codeinstances-demo -child, exit 0, 23 calls, 5 values, 52 ms)"
     },
     {
       "name": "every request reached the live servers and was kept",
@@ -60,7 +60,7 @@
     {
       "name": "an unhooked clock is caught",
       "passed": true,
-      "detail": "stdout line 1: recorded \"started 2026-10-18T12:33:04.884895511+03:00\", replayed \"started 2026-10-18T12:33:05.729778041+03:00\""
+      "detail": "stdout line 1: recorded \"started 2026-10-18T13:20:08.358127561+03:00\", replayed \"started 2026-10-18T13:20:09.108986963+03:00\""
     },
     {
       "name": "verify accepts the untouched file",
@@ -87,7 +87,7 @@
     {
       "name": "shrink narrows the failure to item 7's answer",
       "passed": true,
-      "detail": "1 of 22 differing answers needed, 11 runs"
+      "detail": "1 of 23 differing answers needed, 12 runs"
     },
     {
       "name": "test fails the build that still has the bug",
@@ -124,7 +124,7 @@
     {
       "name": "fork with a given answer runs the what-if offline",
       "passed": true,
-      "detail": "codeinstances: kept /tmp/codeinstances-demo-209470629/what-if.instance (3a71669e0189: /tmp/tmp.h6PtKjmyto/bin/codeinstances-demo -child, exit 1, 2 calls, 3 values, 13 ms)"
+      "detail": "codeinstances: kept /tmp/codeinstances-demo-1903062519/what-if.instance (fe9eede0b0cf: /tmp/tmp.gl9KBwqwYE/bin/codeinstances-demo -child, exit 1, 2 calls, 3 values, 14 ms)"
     },
     {
       "name": "fork past the last call answers every call from the parent and comes out the same",
@@ -133,7 +133,7 @@
     {
       "name": "sign vouches for a run and verify -trust accepts the signer's key",
       "passed": true,
-      "detail": "    key OtmzB5J7lMdRzhv087qEAh0fulX2/sdHfLNzb4Xij+o="
+      "detail": "    key 9ZdGkvoxqTpsArNPdduT7b/kQ/bXdTM64TpbHqTsgYs="
     },
     {
       "name": "verify -trust refuses an unsigned run and one signed by a key it doesn't trust",
@@ -142,42 +142,58 @@
     {
       "name": "an edited run with a fresh id still fails, on its signature",
       "passed": true,
-      "detail": "codeinstances verify: /tmp/codeinstances-demo-209470629/forged.instance: signature 1 (key cb535662feda0e62): a signature doesn't check out: the run was changed after it was signed, or the signature wasn't made by its key"
+      "detail": "codeinstances verify: /tmp/codeinstances-demo-1903062519/forged.instance: signature 1 (key eabdcf824eae0929): a signature doesn't check out: the run was changed after it was signed, or the signature wasn't made by its key"
     },
     {
       "name": "a store started with trusted keys refuses the unsigned run and takes the signed one",
+      "passed": true
+    },
+    {
+      "name": "a store started with -run replays the signed run on demand, and it matches",
+      "passed": true,
+      "detail": "codeinstances: replayed 428f14a7dd16 on the store: matched (exit 1 after 15 ms)"
+    },
+    {
+      "name": "run -at tries a what-if on the store: with the order accepted, the program gets as far as the status call",
+      "passed": true,
+      "detail": "exit 1"
+    },
+    {
+      "name": "the store won't run a run no trusted key signed",
       "passed": true
     }
   ],
   "passed": true,
   "calls": 23,
   "values": 5,
-  "instance_file_bytes": 20625,
-  "record_ms": 83,
+  "instance_file_bytes": 20631,
+  "record_ms": 71,
   "replay_ms": [
-    44,
-    40,
     37,
+    37,
+    38,
+    49,
+    41,
     40,
-    39,
     44,
-    45,
-    47,
-    47,
-    46
+    48,
+    48,
+    44
   ],
-  "diff_ms": 12,
-  "shrink_ms": 383,
-  "shrink_runs": 11,
-  "shrink_answers_changed": 22,
+  "diff_ms": 8,
+  "shrink_ms": 420,
+  "shrink_runs": 12,
+  "shrink_answers_changed": 23,
   "shrink_answers_needed": 1,
-  "test_ms": 78,
-  "group_ms": 11,
+  "test_ms": 86,
+  "group_ms": 17,
   "groups": 2,
-  "push_ms": 16,
-  "fork_ms": 20,
-  "pull_ms": 4,
-  "sign_ms": 6,
+  "push_ms": 25,
+  "fork_ms": 25,
+  "pull_ms": 5,
+  "sign_ms": 5,
   "verify_ms": 3,
+  "run_ms": 22,
+  "run_fork_ms": 50,
   "live_server_requests": 23
 }

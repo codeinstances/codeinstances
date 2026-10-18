@@ -1,16 +1,16 @@
 # Every test, verbose
-# recorded 2026-10-18 09:31 UTC at bbc71e6, CodeInstances 0.7.0, go1.24.7 linux/amd64
+# recorded 2026-10-18 10:18 UTC at 457edee, CodeInstances 0.8.0, go1.24.7 linux/amd64
 # Linux 6.18.44-fc-v139, Intel(R) Xeon(R) Processor @ 2.10GHz, 2 CPUs
 # command: go test -count=1 -v ./...
 
 === RUN   TestRecordAndReplayMatchOffline
 --- PASS: TestRecordAndReplayMatchOffline (0.11s)
 === RUN   TestExitCodeIsRecordedAndCompared
---- PASS: TestExitCodeIsRecordedAndCompared (0.06s)
+--- PASS: TestExitCodeIsRecordedAndCompared (0.07s)
 === RUN   TestChangedProgramsAreCaught
---- PASS: TestChangedProgramsAreCaught (0.09s)
+--- PASS: TestChangedProgramsAreCaught (0.10s)
 === RUN   TestStderrComparisonCanBeSkipped
---- PASS: TestStderrComparisonCanBeSkipped (0.04s)
+--- PASS: TestStderrComparisonCanBeSkipped (0.05s)
 === RUN   TestCrashesAreRecordedAndReplayed
 --- PASS: TestCrashesAreRecordedAndReplayed (0.03s)
 === RUN   TestKilledProgramIsRecorded
@@ -24,9 +24,9 @@
 === RUN   TestReplayAnotherCommand
 --- PASS: TestReplayAnotherCommand (0.05s)
 === RUN   TestOutputIsPassedThrough
---- PASS: TestOutputIsPassedThrough (0.02s)
+--- PASS: TestOutputIsPassedThrough (0.04s)
 === RUN   TestErrors
---- PASS: TestErrors (0.00s)
+--- PASS: TestErrors (0.01s)
 === RUN   TestCompareOutput
 --- PASS: TestCompareOutput (0.00s)
 === RUN   TestEnvironmentForTheProgram
@@ -48,21 +48,21 @@
 === RUN   TestCompareSpeedOrder
 --- PASS: TestCompareSpeedOrder (0.00s)
 === RUN   TestCompareRecordedRuns
---- PASS: TestCompareRecordedRuns (0.05s)
+--- PASS: TestCompareRecordedRuns (0.08s)
 === RUN   TestClipKeepsCharactersWhole
 --- PASS: TestClipKeepsCharactersWhole (0.00s)
 === RUN   TestForkRunsLiveFromTheStep
---- PASS: TestForkRunsLiveFromTheStep (0.06s)
+--- PASS: TestForkRunsLiveFromTheStep (0.09s)
 === RUN   TestForkOfflineWithAGivenAnswer
---- PASS: TestForkOfflineWithAGivenAnswer (0.06s)
+--- PASS: TestForkOfflineWithAGivenAnswer (0.07s)
 === RUN   TestForkValuesAndErrors
---- PASS: TestForkValuesAndErrors (0.04s)
+--- PASS: TestForkValuesAndErrors (0.05s)
 === RUN   TestReadAnswer
---- PASS: TestReadAnswer (0.00s)
+--- PASS: TestReadAnswer (0.01s)
 === RUN   TestForkRules
 --- PASS: TestForkRules (0.00s)
 === RUN   TestShrinkOfAForkIsARunOfItsOwn
---- PASS: TestShrinkOfAForkIsARunOfItsOwn (0.14s)
+--- PASS: TestShrinkOfAForkIsARunOfItsOwn (0.20s)
 === RUN   TestNormalize
 --- PASS: TestNormalize (0.00s)
 === RUN   TestErrorSignature
@@ -84,23 +84,23 @@
 === RUN   TestOddCharactersAreDropped
 --- PASS: TestOddCharactersAreDropped (0.00s)
 === RUN   TestShrinkFindsTheAnswersThatMatter
---- PASS: TestShrinkFindsTheAnswersThatMatter (0.33s)
+--- PASS: TestShrinkFindsTheAnswersThatMatter (0.42s)
 === RUN   TestShrinkRefusesWhatItCannotShrink
---- PASS: TestShrinkRefusesWhatItCannotShrink (0.23s)
+--- PASS: TestShrinkRefusesWhatItCannotShrink (0.28s)
 === RUN   TestShrinkStopsAtTheRunLimit
---- PASS: TestShrinkStopsAtTheRunLimit (0.44s)
+--- PASS: TestShrinkStopsAtTheRunLimit (0.40s)
 === RUN   TestDdminHelpers
 --- PASS: TestDdminHelpers (0.00s)
 === RUN   TestInstancesAsRegressionTests
---- PASS: TestInstancesAsRegressionTests (0.11s)
+--- PASS: TestInstancesAsRegressionTests (0.15s)
 === RUN   TestShrinkStopsWhenCancelled
---- PASS: TestShrinkStopsWhenCancelled (0.05s)
+--- PASS: TestShrinkStopsWhenCancelled (0.04s)
 PASS
-ok  	github.com/codeinstances/codeinstances	4.272s
+ok  	github.com/codeinstances/codeinstances	4.628s
 === RUN   TestUsageAndVersion
 --- PASS: TestUsageAndVersion (0.00s)
 === RUN   TestRecordShowReplayVerify
---- PASS: TestRecordShowReplayVerify (0.04s)
+--- PASS: TestRecordShowReplayVerify (0.03s)
 === RUN   TestBadArguments
 --- PASS: TestBadArguments (0.00s)
 === RUN   TestRecordWithoutDoubleDash
@@ -108,13 +108,13 @@ ok  	github.com/codeinstances/codeinstances	4.272s
 === RUN   TestKilledRecordLeavesNoFile
 --- PASS: TestKilledRecordLeavesNoFile (0.02s)
 === RUN   TestInterruptReachesTheProgramNotTheRecorder
---- PASS: TestInterruptReachesTheProgramNotTheRecorder (0.81s)
+--- PASS: TestInterruptReachesTheProgramNotTheRecorder (0.82s)
 === RUN   TestShowJSONIsTheFileItself
 --- PASS: TestShowJSONIsTheFileItself (0.00s)
 === RUN   TestDiff
---- PASS: TestDiff (0.03s)
+--- PASS: TestDiff (0.02s)
 === RUN   TestShrinkAndTest
---- PASS: TestShrinkAndTest (0.32s)
+--- PASS: TestShrinkAndTest (0.26s)
 === RUN   TestGroup
 --- PASS: TestGroup (0.01s)
 === RUN   TestPushPullReport
@@ -125,10 +125,14 @@ ok  	github.com/codeinstances/codeinstances	4.272s
 --- PASS: TestForkCommand (0.03s)
 === RUN   TestKeygenSignVerify
 --- PASS: TestKeygenSignVerify (0.02s)
+=== RUN   TestRunCommand
+--- PASS: TestRunCommand (0.04s)
+=== RUN   TestStoppingTheStoreStopsItsRuns
+--- PASS: TestStoppingTheStoreStopsItsRuns (0.08s)
 PASS
-ok  	github.com/codeinstances/codeinstances/cmd/codeinstances	1.320s
+ok  	github.com/codeinstances/codeinstances/cmd/codeinstances	1.385s
 === RUN   TestDemo
-ok   record finishes and keeps the exit code exit 0 codeinstances: kept /tmp/codeinstances-demo-747660377/demo.instance (96d5be29574c: /tmp/TestDemo2227999185/001/codeinstances-demo -child, exit 0, 23 calls, 5 values, 84 ms)
+ok   record finishes and keeps the exit code exit 0 codeinstances: kept /tmp/codeinstances-demo-642560852/demo.instance (3c2119736335: /tmp/TestDemo1241675604/001/codeinstances-demo -child, exit 0, 23 calls, 5 values, 60 ms)
 ok   every request reached the live servers and was kept 23 calls kept, 23 served live
 ok   hooked clock and random values were kept 5 values
 ok   secret headers are redacted Set-Cookie
@@ -138,13 +142,13 @@ ok   two more failing runs are recorded exits [1 1]
 ok   live servers are down before replay 
 ok   3 replays offline all match the recording 
 ok   an extra request is caught request GET https://api.demo.test/quote?again=1 isn't in the recording
-ok   an unhooked clock is caught stdout line 1: recorded "started 2026-10-18T12:31:26.041022122+03:00", replayed "started 2026-10-18T12:31:26.68577628+03:00"
+ok   an unhooked clock is caught stdout line 1: recorded "started 2026-10-18T13:18:17.168544739+03:00", replayed "started 2026-10-18T13:18:17.839295649+03:00"
 ok   verify accepts the untouched file 
 ok   verify catches an edited file 
 ok   diff finds a run the same as itself 
 ok   diff finds the extra request in a second run 26 differences, 23 calls changed, 1 only in b
 ok   diff times every paired call 23 calls timed in both runs
-ok   shrink narrows the failure to item 7's answer 1 of 23 differing answers needed, 9 runs
+ok   shrink narrows the failure to item 7's answer 1 of 23 differing answers needed, 11 runs
 ok   test fails the build that still has the bug codeinstances: 1 of 2 tests passed
 ok   test passes the fixed build codeinstances: 2 of 2 tests passed
 ok   group puts repeats of one bug together 3 failing runs in 2 groups
@@ -152,18 +156,21 @@ ok   push uploads the failing runs to a store 3 pushed
 ok   pull fetches a run back by a 12-digit id prefix 
 ok   the store groups what it holds 
 ok   report writes a bug report that says how to pull and replay the run 
-ok   fork with a given answer runs the what-if offline codeinstances: kept /tmp/codeinstances-demo-747660377/what-if.instance (fd8f166b5802: /tmp/TestDemo2227999185/001/codeinstances-demo -child, exit 1, 2 calls, 3 values, 18 ms)
+ok   fork with a given answer runs the what-if offline codeinstances: kept /tmp/codeinstances-demo-642560852/what-if.instance (47ee1cb6d990: /tmp/TestDemo1241675604/001/codeinstances-demo -child, exit 1, 2 calls, 3 values, 22 ms)
 ok   fork past the last call answers every call from the parent and comes out the same 
-ok   sign vouches for a run and verify -trust accepts the signer's key     key hT4OpHanhdPke11OiEq5toPoGc4cWUaUDMLGKgmKE+U=
+ok   sign vouches for a run and verify -trust accepts the signer's key     key Ar7COA4Fs50Avpd/Es084e2x2fGByZtsZtgy9rz/thU=
 ok   verify -trust refuses an unsigned run and one signed by a key it doesn't trust 
-ok   an edited run with a fresh id still fails, on its signature codeinstances verify: /tmp/codeinstances-demo-747660377/forged.instance: signature 1 (key 29fca111acb608cd): a signature doesn't check out: the run was changed after it was signed, or the signature wasn't made by its key
+ok   an edited run with a fresh id still fails, on its signature codeinstances verify: /tmp/codeinstances-demo-642560852/forged.instance: signature 1 (key edb7e196262e5342): a signature doesn't check out: the run was changed after it was signed, or the signature wasn't made by its key
 ok   a store started with trusted keys refuses the unsigned run and takes the signed one 
+ok   a store started with -run replays the signed run on demand, and it matches codeinstances: replayed b4db3ba35410 on the store: matched (exit 1 after 28 ms)
+ok   run -at tries a what-if on the store: with the order accepted, the program gets as far as the status call exit 1
+ok   the store won't run a run no trusted key signed 
 codeinstances-demo: every check passed
---- PASS: TestDemo (3.56s)
+--- PASS: TestDemo (3.88s)
 PASS
-ok  	github.com/codeinstances/codeinstances/examples/demo	3.575s
+ok  	github.com/codeinstances/codeinstances/examples/demo	3.892s
 === RUN   TestOutsideCodeinstancesTheValuesAreReal
---- PASS: TestOutsideCodeinstancesTheValuesAreReal (0.02s)
+--- PASS: TestOutsideCodeinstancesTheValuesAreReal (0.01s)
 === RUN   TestRecordThenReplay
 --- PASS: TestRecordThenReplay (0.03s)
 === RUN   TestReplayRunsOutAndSaysSo
@@ -171,14 +178,14 @@ ok  	github.com/codeinstances/codeinstances/examples/demo	3.575s
 === RUN   TestUnknownModeIsIgnored
 --- PASS: TestUnknownModeIsIgnored (0.01s)
 === RUN   TestTransportTrustsTheRunAuthority
-2026/10/18 12:31:26 http: TLS handshake error from 127.0.0.1:43018: remote error: tls: bad certificate
+2026/10/18 13:18:18 http: TLS handshake error from 127.0.0.1:37030: remote error: tls: bad certificate
 --- PASS: TestTransportTrustsTheRunAuthority (0.02s)
 === RUN   TestIntnPanicsOnZero
 --- PASS: TestIntnPanicsOnZero (0.00s)
 === RUN   TestReplayedBytesOfAnotherLengthAreNotUsed
 --- PASS: TestReplayedBytesOfAnotherLengthAreNotUsed (0.00s)
 PASS
-ok  	github.com/codeinstances/codeinstances/hook	0.103s
+ok  	github.com/codeinstances/codeinstances/hook	0.091s
 === RUN   TestBodyTextAndBinary
 --- PASS: TestBodyTextAndBinary (0.00s)
 === RUN   TestSaveLoadRoundTrip
@@ -207,13 +214,13 @@ ok  	github.com/codeinstances/codeinstances/hook	0.103s
 === RUN   TestValidateBodiesAndValues
 --- PASS: TestValidateBodiesAndValues (0.00s)
 === RUN   TestCallDuration
---- PASS: TestCallDuration (0.01s)
+--- PASS: TestCallDuration (0.00s)
 === RUN   TestValidateRefusesWhatCouldFoolATerminal
 --- PASS: TestValidateRefusesWhatCouldFoolATerminal (0.00s)
 === RUN   TestSignRoundTrip
 --- PASS: TestSignRoundTrip (0.00s)
 === RUN   TestSignatureCatchesEditsWithANewID
---- PASS: TestSignatureCatchesEditsWithANewID (0.01s)
+--- PASS: TestSignatureCatchesEditsWithANewID (0.00s)
 === RUN   TestSignatureForms
 --- PASS: TestSignatureForms (0.00s)
 === RUN   TestMessageIsFixed
@@ -223,12 +230,12 @@ ok  	github.com/codeinstances/codeinstances/hook	0.103s
 === RUN   TestSignedExample
 --- PASS: TestSignedExample (0.00s)
 PASS
-ok  	github.com/codeinstances/codeinstances/instance	0.039s
+ok  	github.com/codeinstances/codeinstances/instance	0.029s
 ?   	github.com/codeinstances/codeinstances/internal/buildinfo	[no test files]
 === RUN   TestIssueAndVerify
 --- PASS: TestIssueAndVerify (0.00s)
 PASS
-ok  	github.com/codeinstances/codeinstances/internal/ca	0.008s
+ok  	github.com/codeinstances/codeinstances/internal/ca	0.006s
 === RUN   TestRecordThenReplayHTTPAndHTTPS
 --- PASS: TestRecordThenReplayHTTPAndHTTPS (0.01s)
 === RUN   TestSecretsAreRedactedUnlessKept
@@ -240,13 +247,13 @@ ok  	github.com/codeinstances/codeinstances/internal/ca	0.008s
 === RUN   TestRepeatedRequestsReplayInOrder
 --- PASS: TestRepeatedRequestsReplayInOrder (0.01s)
 === RUN   TestConcurrentRequests
---- PASS: TestConcurrentRequests (0.35s)
+--- PASS: TestConcurrentRequests (0.58s)
 === RUN   TestStrictOrder
 --- PASS: TestStrictOrder (0.01s)
 === RUN   TestLargeBodies
---- PASS: TestLargeBodies (0.29s)
+--- PASS: TestLargeBodies (0.32s)
 === RUN   TestTooLargeBodyIsKeptAsAFailedCallAndReplayed
---- PASS: TestTooLargeBodyIsKeptAsAFailedCallAndReplayed (0.84s)
+--- PASS: TestTooLargeBodyIsKeptAsAFailedCallAndReplayed (0.71s)
 === RUN   TestRecordedRequestsLeaveOutConnectionHeaders
 --- PASS: TestRecordedRequestsLeaveOutConnectionHeaders (0.00s)
 === RUN   TestNonProxyRequestIsRefused
@@ -258,18 +265,30 @@ ok  	github.com/codeinstances/codeinstances/internal/ca	0.008s
 === RUN   TestHelpers
 --- PASS: TestHelpers (0.00s)
 PASS
-ok  	github.com/codeinstances/codeinstances/internal/capture	1.566s
+ok  	github.com/codeinstances/codeinstances/internal/capture	1.697s
+=== RUN   TestRunOnDemand
+--- PASS: TestRunOnDemand (1.64s)
+=== RUN   TestRunLimits
+--- PASS: TestRunLimits (3.35s)
+=== RUN   TestRunClient
+--- PASS: TestRunClient (1.57s)
+=== RUN   TestTail
+--- PASS: TestTail (0.00s)
+=== RUN   TestKeptForksAtOnce
+--- PASS: TestKeptForksAtOnce (1.55s)
+=== RUN   TestRunStopsWhatTheProgramStarted
+--- PASS: TestRunStopsWhatTheProgramStarted (4.00s)
 === RUN   TestStore
 --- PASS: TestStore (0.01s)
 === RUN   TestAmbiguousPrefix
 --- PASS: TestAmbiguousPrefix (0.00s)
 === RUN   TestServer
---- PASS: TestServer (0.01s)
+--- PASS: TestServer (0.00s)
 === RUN   TestClient
---- PASS: TestClient (0.01s)
+--- PASS: TestClient (0.00s)
 === RUN   TestHostsAndRedirects
 --- PASS: TestHostsAndRedirects (0.00s)
 === RUN   TestTrustedServer
---- PASS: TestTrustedServer (0.01s)
+--- PASS: TestTrustedServer (0.00s)
 PASS
-ok  	github.com/codeinstances/codeinstances/store	0.061s
+ok  	github.com/codeinstances/codeinstances/store	12.146s
