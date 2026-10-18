@@ -4,10 +4,13 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,6 +24,7 @@ import (
 	"github.com/codeinstances/codeinstances"
 	"github.com/codeinstances/codeinstances/hook"
 	"github.com/codeinstances/codeinstances/instance"
+	"github.com/codeinstances/codeinstances/store"
 )
 
 // The test binary is also the command (CI_CLI=1) and the recorded program
@@ -472,5 +476,114 @@ func TestGroup(t *testing.T) {
 		if _, _, code := cli(t, args...); code != 2 {
 			t.Errorf("%v: exit %d, want 2", args, code)
 		}
+	}
+}
+
+func TestPushPullReport(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "store"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(&store.Server{Store: st, Token: "sesame"})
+	defer ts.Close()
+	file := filepath.Join(dir, "bug.instance")
+	inst := &instance.Instance{Tool: "test", Command: instance.Command{Argv: []string{"prog"}},
+		Result: instance.Result{ExitCode: 1, Stderr: instance.NewBody([]byte("error: disk full\n"))}}
+	if err := instance.Save(file, inst); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CODEINSTANCES_STORE", ts.URL)
+	t.Setenv("CODEINSTANCES_TOKEN", "sesame")
+
+	o, e, code := cli(t, "push", file)
+	if code != 0 || !strings.Contains(o, file+"  "+inst.ID+"  "+ts.URL+"/v1/instances/"+inst.ID+" (new)") {
+		t.Fatalf("%d %s %s", code, o, e)
+	}
+	if o, _, _ := cli(t, "push", dir); !strings.Contains(o, "(already there)") {
+		t.Fatal(o)
+	}
+	o, _, code = cli(t, "push", "-json", file)
+	var pushed []map[string]any
+	if code != 0 || json.Unmarshal([]byte(o), &pushed) != nil || pushed[0]["id"] != inst.ID || pushed[0]["created"] != false {
+		t.Fatal(o)
+	}
+
+	out := filepath.Join(dir, "pulled.instance")
+	hex := strings.TrimPrefix(inst.ID, "sha256:")
+	o, _, code = cli(t, "pull", "-o", out, hex[:12])
+	if code != 0 || !strings.Contains(o, "codeinstances: pulled "+out) {
+		t.Fatal(code, o)
+	}
+	a, _ := os.ReadFile(file)
+	b, _ := os.ReadFile(out)
+	if !bytes.Equal(a, b) {
+		t.Fatal("pulled a different file")
+	}
+	wd, _ := os.Getwd()
+	os.Chdir(dir)
+	_, _, code = cli(t, "pull", inst.ID)
+	os.Chdir(wd)
+	if _, err := os.Stat(filepath.Join(dir, hex[:12]+".instance")); code != 0 || err != nil {
+		t.Fatal("the default file name", code, err)
+	}
+
+	o, _, code = cli(t, "report", file)
+	for _, want := range []string{"## exit 1: error: disk full\n", "codeinstances pull -from " + ts.URL + " -o bug.instance " + inst.ID, "codeinstances replay bug.instance"} {
+		if code != 0 || !strings.Contains(o, want) {
+			t.Fatalf("report lacks %q:\n%s", want, o)
+		}
+	}
+	t.Setenv("CODEINSTANCES_STORE", "")
+	if o, _, _ := cli(t, "report", file); strings.Contains(o, "pull") {
+		t.Fatal(o)
+	}
+
+	for _, args := range [][]string{
+		{"push", file}, // no store
+		{"pull", hex[:12]},
+		{"push", "-to", ts.URL, "-token", "wrong", file},
+		{"pull", "-from", ts.URL, "nothex"},
+		{"pull", "-from", ts.URL, strings.Repeat("0", 64)},
+		{"push", "-to", ts.URL, filepath.Join(dir, "missing")},
+		{"report"},
+		{"report", filepath.Join(dir, "missing")},
+		{"serve", "-addr", "0.0.0.0:0", "-token", ""},
+		{"serve", "-addr", "nonsense"},
+		{"serve", "extra"},
+	} {
+		if _, _, code := cli(t, args...); code != 2 {
+			t.Errorf("%v: exit %d, want 2", args, code)
+		}
+	}
+}
+
+func TestServeAndStop(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("SIGINT is a Unix test")
+	}
+	dir := t.TempDir()
+	cmd := exec.Command(os.Args[0], "serve", "-dir", filepath.Join(dir, "store"), "-addr", "127.0.0.1:0")
+	cmd.Env = append(os.Environ(), "CI_CLI=1", "CODEINSTANCES_TOKEN=")
+	pipe, _ := cmd.StderrPipe()
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	line, _ := bufio.NewReader(pipe).ReadString('\n')
+	_, addr, _ := strings.Cut(line, " at ")
+	addr = strings.TrimSpace(addr)
+	if !strings.HasPrefix(addr, "http://127.0.0.1:") {
+		cmd.Process.Kill()
+		t.Fatalf("%q", line)
+	}
+	go io.Copy(io.Discard, pipe)
+	resp, err := http.Get(addr + "/v1/instances")
+	if err != nil || resp.StatusCode != 200 {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	cmd.Process.Signal(syscall.SIGINT)
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("serve didn't stop cleanly: %v", err)
 	}
 }

@@ -10,6 +10,10 @@
 //	codeinstances shrink [flags] -pass passing.instance failing.instance [-- command [args...]]
 //	codeinstances test [flags] file-or-dir... [-- command [args...]]
 //	codeinstances group [flags] file-or-dir...
+//	codeinstances report [flags] file
+//	codeinstances serve [flags]
+//	codeinstances push [flags] file...
+//	codeinstances pull [flags] id
 //	codeinstances show [-json] file
 //	codeinstances verify file
 //	codeinstances version [-json]
@@ -22,6 +26,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -32,6 +38,7 @@ import (
 	"github.com/codeinstances/codeinstances"
 	"github.com/codeinstances/codeinstances/instance"
 	"github.com/codeinstances/codeinstances/internal/buildinfo"
+	"github.com/codeinstances/codeinstances/store"
 )
 
 const usage = `CodeInstances keeps runs of programs as instances and replays them.
@@ -55,6 +62,14 @@ Usage:
   codeinstances group [flags] file-or-dir...
       Fingerprint failing runs and put the ones that fail the same way
       together, so repeats of one bug show as one group.
+  codeinstances report [-url store] file
+      Write a Markdown bug report for an instance, to paste into an issue.
+  codeinstances serve [flags]
+      Run a store: an HTTP server that keeps instances under their ids.
+  codeinstances push [-to url] file...
+      Upload instances to a store and print their ids and links.
+  codeinstances pull [-from url] [-o file] id
+      Download an instance from a store by id or unique prefix.
   codeinstances show [-json] file
       Describe an instance.
   codeinstances verify file
@@ -66,8 +81,10 @@ Exit status: record exits as the program did; replay exits 0 when the run
 matched, 1 when it diverged; diff exits 0 when the runs are the same, 1 when
 they differ; shrink exits 0 when it kept an instance, 1 when the failure
 couldn't be narrowed down; test exits 0 when every test passed, 1
-when any failed; group exits 0; any command exits 2 on a usage or file
-error.
+when any failed; group, report, push and pull exit 0 when they worked; any
+command exits 2 on a usage, file or network error. push, pull and report
+read the store's address from CODEINSTANCES_STORE and push, pull and serve
+the token from CODEINSTANCES_TOKEN when no flag gives them.
 `
 
 func main() {
@@ -92,6 +109,14 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return test(args[1:], stdout, stderr)
 	case "group":
 		return group(args[1:], stdout, stderr)
+	case "report":
+		return report(args[1:], stdout, stderr)
+	case "serve":
+		return serve(args[1:], stdout, stderr)
+	case "push":
+		return push(args[1:], stdout, stderr)
+	case "pull":
+		return pull(args[1:], stdout, stderr)
 	case "show":
 		return show(args[1:], stdout, stderr)
 	case "verify":
@@ -784,4 +809,199 @@ func plural(n int, what string) string {
 		return "1 " + what
 	}
 	return fmt.Sprintf("%d %ss", n, what)
+}
+
+func report(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("report", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	storeURL := fs.String("url", os.Getenv("CODEINSTANCES_STORE"), "the store the instance was pushed to, so the report says how to pull it (default $CODEINSTANCES_STORE)")
+	lines := fs.Int("lines", 20, "how many lines of output to show")
+	fs.Usage = func() {
+		fmt.Fprintln(stderr, "usage: codeinstances report [flags] file")
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() != 1 {
+		fs.Usage()
+		return 2
+	}
+	inst, err := instance.Load(fs.Arg(0))
+	if err != nil {
+		fmt.Fprintf(stderr, "codeinstances report: %v\n", err)
+		return 2
+	}
+	fmt.Fprint(stdout, codeinstances.BugReport(inst, codeinstances.BugReportOptions{File: filepath.Base(fs.Arg(0)), StoreURL: *storeURL, TailLines: *lines}))
+	return 0
+}
+
+func serve(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	dir := fs.String("dir", "instances", "the folder to keep instances in")
+	addr := fs.String("addr", "127.0.0.1:7979", "the address to listen on")
+	token := fs.String("token", os.Getenv("CODEINSTANCES_TOKEN"), "the token clients must send (default $CODEINSTANCES_TOKEN)")
+	openRead := fs.Bool("open-read", false, "let anyone read without the token; uploads still need it")
+	maxBytes := fs.Int64("max-size", store.DefaultMaxBytes, "the largest instance to take, in bytes")
+	fs.Usage = func() {
+		fmt.Fprintln(stderr, "usage: codeinstances serve [flags]")
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() != 0 {
+		fs.Usage()
+		return 2
+	}
+	host, _, err := net.SplitHostPort(*addr)
+	if err != nil {
+		fmt.Fprintf(stderr, "codeinstances serve: -addr: %v\n", err)
+		return 2
+	}
+	if *token == "" && !isLoopback(host) {
+		fmt.Fprintln(stderr, "codeinstances serve: give -token (or set CODEINSTANCES_TOKEN) to serve beyond this machine")
+		return 2
+	}
+	st, err := store.Open(*dir)
+	if err != nil {
+		fmt.Fprintf(stderr, "codeinstances serve: %v\n", err)
+		return 2
+	}
+	ln, err := net.Listen("tcp", *addr)
+	if err != nil {
+		fmt.Fprintf(stderr, "codeinstances serve: %v\n", err)
+		return 2
+	}
+	entries, _ := st.List()
+	fmt.Fprintf(stderr, "codeinstances: serving %s (%d instances) at http://%s\n", *dir, len(entries), ln.Addr())
+	srv := &http.Server{
+		Handler:           &store.Server{Store: st, Token: *token, OpenRead: *openRead, MaxBytes: *maxBytes},
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       10 * time.Minute,
+		IdleTimeout:       2 * time.Minute,
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	go func() {
+		<-ctx.Done()
+		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		srv.Shutdown(shutdown)
+	}()
+	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		fmt.Fprintf(stderr, "codeinstances serve: %v\n", err)
+		return 2
+	}
+	return 0
+}
+
+func isLoopback(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func storeClient(fs *flag.FlagSet, urlFlag string) (*store.Client, *string, *string) {
+	u := fs.String(urlFlag, os.Getenv("CODEINSTANCES_STORE"), "the store's address, such as http://127.0.0.1:7979 (default $CODEINSTANCES_STORE)")
+	t := fs.String("token", os.Getenv("CODEINSTANCES_TOKEN"), "the store's token (default $CODEINSTANCES_TOKEN)")
+	return &store.Client{}, u, t
+}
+
+func push(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("push", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	client, u, t := storeClient(fs, "to")
+	asJSON := fs.Bool("json", false, "print the results as JSON")
+	fs.Usage = func() {
+		fmt.Fprintln(stderr, "usage: codeinstances push [flags] file...")
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() == 0 || *u == "" {
+		if *u == "" {
+			fmt.Fprintln(stderr, "codeinstances push: give -to or set CODEINSTANCES_STORE")
+		}
+		fs.Usage()
+		return 2
+	}
+	client.URL, client.Token = *u, *t
+	files, err := instanceFiles(fs.Args())
+	if err != nil {
+		fmt.Fprintf(stderr, "codeinstances push: %v\n", err)
+		return 2
+	}
+	type entry struct {
+		File string `json:"file"`
+		*store.Pushed
+	}
+	var results []entry
+	for _, f := range files {
+		data, err := os.ReadFile(f)
+		if err != nil {
+			fmt.Fprintf(stderr, "codeinstances push: %v\n", err)
+			return 2
+		}
+		p, err := client.Push(data)
+		if err != nil {
+			fmt.Fprintf(stderr, "codeinstances push: %s: %v\n", f, err)
+			return 2
+		}
+		results = append(results, entry{f, p})
+		if !*asJSON {
+			state := "new"
+			if !p.Created {
+				state = "already there"
+			}
+			fmt.Fprintf(stdout, "%s  %s  %s (%s)\n", f, p.ID, p.URL, state)
+		}
+	}
+	if *asJSON {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		enc.Encode(results)
+	}
+	return 0
+}
+
+func pull(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("pull", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	client, u, t := storeClient(fs, "from")
+	out := fs.String("o", "", "the file to write (default: the first 12 digits of the id, then .instance)")
+	fs.Usage = func() {
+		fmt.Fprintln(stderr, "usage: codeinstances pull [flags] id")
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() != 1 || *u == "" {
+		if *u == "" {
+			fmt.Fprintln(stderr, "codeinstances pull: give -from or set CODEINSTANCES_STORE")
+		}
+		fs.Usage()
+		return 2
+	}
+	client.URL, client.Token = *u, *t
+	data, inst, err := client.Pull(fs.Arg(0))
+	if err != nil {
+		fmt.Fprintf(stderr, "codeinstances pull: %v\n", err)
+		return 2
+	}
+	path := *out
+	if path == "" {
+		path = instance.ShortID(inst.ID) + ".instance"
+	}
+	if err := instance.WriteAtomic(path, data); err != nil {
+		fmt.Fprintf(stderr, "codeinstances pull: %v\n", err)
+		return 2
+	}
+	fmt.Fprintf(stdout, "codeinstances: pulled %s (%s)\n", path, inst.Summary())
+	return 0
 }

@@ -14,7 +14,8 @@
 # program that isn't hooked at all is recorded against a live local server,
 # the server stopped, and the run replayed with show and verify working on
 # the file, diff telling it apart from a second run, test replaying it as a
-# regression test, and group leaving passing runs out.
+# regression test, group leaving passing runs out and grouping two crashes,
+# and a store served, pushed to and pulled from.
 import http.server
 import json
 import os
@@ -126,6 +127,23 @@ def smoke(bin_dir, version):
         grouped = json.loads(run([cli, "group", "-json", Path(work) / "crash1.instance", Path(work) / "crash2.instance", file]).stdout)
         require(grouped["failing"] == 2 and len(grouped["groups"]) == 1 and grouped["groups"][0]["fingerprint"]["error"].startswith("KeyError: 'row <n>'\nat load (crash.py)"), f"group: {grouped}")
         print("ok   group puts two Python crashes with different messages in one group")
+        server = subprocess.Popen([str(cli), "serve", "-dir", str(Path(work) / "store"), "-addr", "127.0.0.1:0", "-token", "smoke"],
+                                  stderr=subprocess.PIPE, text=True)
+        try:
+            line = server.stderr.readline()
+            require(" at http://127.0.0.1:" in line, f"serve: {line}")
+            store = line.rsplit(" at ", 1)[1].strip()
+            pushed = json.loads(run([cli, "push", "-json", "-to", store, "-token", "smoke", Path(work) / "crash1.instance"]).stdout)
+            pid = pushed[0]["id"]
+            pulled = Path(work) / "pulled.instance"
+            run([cli, "pull", "-from", store, "-token", "smoke", "-o", pulled, pid.split(":")[1][:12]])
+            require(pulled.read_bytes() == (Path(work) / "crash1.instance").read_bytes(), "pull gave a different file")
+            report = run([cli, "report", "-url", store, pulled]).stdout
+            require(report.startswith("## exit 1: KeyError") and "codeinstances pull -from " + store in report, f"report: {report}")
+        finally:
+            server.terminate()
+            server.wait(timeout=30)
+        print("ok   serve, push, pull and report round trip")
         shown = run([cli, "show", file]).stdout
         require("GET " + url + "/two?x=1 -> 200" in shown, f"show: {shown}")
         require("intact" in run([cli, "verify", file]).stdout, "verify")

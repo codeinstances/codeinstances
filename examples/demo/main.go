@@ -37,6 +37,7 @@ import (
 	"github.com/codeinstances/codeinstances/instance"
 	"github.com/codeinstances/codeinstances/internal/buildinfo"
 	"github.com/codeinstances/codeinstances/internal/ca"
+	"github.com/codeinstances/codeinstances/store"
 )
 
 const (
@@ -69,6 +70,8 @@ type report struct {
 	TestMS      int64            `json:"test_ms"`
 	GroupMS     int64            `json:"group_ms"`
 	Groups      int              `json:"groups"`
+	PushMS      int64            `json:"push_ms"`
+	PullMS      int64            `json:"pull_ms"`
 	ServerCalls int              `json:"live_server_requests"`
 }
 
@@ -519,6 +522,54 @@ func demo(cli string, replays int) (*report, error) {
 	add("group puts repeats of one bug together", code == 0 && grp.Failing == 3 && grp.Passed == 1 && len(grp.Groups) == 2 &&
 		len(grp.Groups[0].Runs) == 2 && grp.Groups[1].Runs[0] == refused,
 		fmt.Sprintf("%d failing runs in %d groups", grp.Failing, len(grp.Groups)))
+
+	// Share and store: a store on a loopback port with a token, the three
+	// failing runs pushed to it, one pulled back by a short id prefix, and
+	// the store's own grouping.
+	st, err := store.Open(filepath.Join(work, "store"))
+	if err != nil {
+		return rep, err
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return rep, err
+	}
+	storeSrv := &http.Server{Handler: &store.Server{Store: st, Token: "demo-token"}, ReadHeaderTimeout: 10 * time.Second, ErrorLog: log.New(io.Discard, "", 0)}
+	go storeSrv.Serve(ln)
+	defer storeSrv.Close()
+	storeURL := "http://" + ln.Addr().String()
+	t = time.Now()
+	out, code, err = runCLI(cli, "push", "-json", "-to", storeURL, "-token", "demo-token", failing, again, refused)
+	rep.PushMS = time.Since(t).Milliseconds()
+	if err != nil {
+		return rep, err
+	}
+	var pushed []struct {
+		ID      string `json:"id"`
+		Created bool   `json:"created"`
+	}
+	json.Unmarshal([]byte(out), &pushed)
+	add("push uploads the failing runs to a store", code == 0 && len(pushed) == 3 && pushed[0].Created, fmt.Sprintf("%d pushed", len(pushed)))
+	if len(pushed) == 3 {
+		pulled := filepath.Join(work, "pulled.instance")
+		t = time.Now()
+		_, code, err = runCLI(cli, "pull", "-from", storeURL, "-token", "demo-token", "-o", pulled, strings.TrimPrefix(pushed[2].ID, "sha256:")[:12])
+		rep.PullMS = time.Since(t).Milliseconds()
+		if err != nil {
+			return rep, err
+		}
+		a, _ := os.ReadFile(refused)
+		b, _ := os.ReadFile(pulled)
+		add("pull fetches a run back by a 12-digit id prefix", code == 0 && bytes.Equal(a, b), "")
+	}
+	g, err := st.Groups()
+	add("the store groups what it holds", err == nil && g.Failing == 3 && len(g.Groups) == 2, "")
+	out, code, err = runCLI(cli, "report", "-url", storeURL, refused)
+	if err != nil {
+		return rep, err
+	}
+	add("report writes a bug report that says how to pull and replay the run",
+		code == 0 && strings.HasPrefix(out, "## exit 1: the order was refused") && strings.Contains(out, "codeinstances pull -from "+storeURL), "")
 	return finish(rep), nil
 }
 

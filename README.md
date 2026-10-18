@@ -1,8 +1,8 @@
 # CodeInstances
 
 Keep a run of any program as a file, replay it, compare it with another,
-shrink a failure to what causes it, keep it as a test, and group repeats of
-the same bug.
+shrink a failure to what causes it, keep it as a test, group repeats of the
+same bug, and share it through a store of your own.
 
 Your code is versioned, reviewed and stored. Its runs are thrown away: a
 test fails in CI, the rerun passes, and the bug is gone. CodeInstances keeps
@@ -16,14 +16,16 @@ replaced by the recording and tells you whether it came out the same.
 one say, and shows where they part ways and which calls got slower.
 `codeinstances shrink` narrows a failure down to the few answers that cause
 it, `codeinstances test` replays a folder of instances as regression tests,
-and `codeinstances group` puts failing runs that fail the same way together.
+`codeinstances group` puts failing runs that fail the same way together, and
+`codeinstances serve`, `push`, `pull` and `report` share runs through a
+self-hosted store and as bug reports.
 
-**Status: v0.4.0, an early release.** Recording, offline replay, divergence
+**Status: v0.5.0, an early release.** Recording, offline replay, divergence
 reports, comparing two runs, shrinking a failure, instances as regression
-tests, grouping failures, the Go hook package, the open format and its
-integrity check work and are tested on Linux and macOS, with the release
-binaries also checked on Windows. The limits are listed
-[below](#limits-in-v040). Open source under the
+tests, grouping failures, a self-hosted store, bug reports, the Go hook
+package, the open format and its integrity check work and are tested on
+Linux and macOS, with the release binaries also checked on Windows. The
+limits are listed [below](#limits-in-v050). Open source under the
 Apache License 2.0.
 
 ## Download
@@ -259,6 +261,45 @@ that passed are counted and left out, and a file given twice counts once.
 `group` takes files and folders like `test`; `-v` lists every run in a group
 and `-json` prints the groups as JSON. It exits 0 whatever it finds.
 
+### Sharing runs: the store, push, pull and report
+
+Every instance already has a stable id: the SHA-256 of its canonical form,
+which `verify` checks. The store uses it as the address.
+
+```sh
+CODEINSTANCES_TOKEN=a-long-random-token codeinstances serve -dir instances
+```
+
+`serve` runs a small HTTP server, on `127.0.0.1:7979` unless `-addr` says
+otherwise, that keeps instances in a folder, each as `<id>.instance`. It
+takes an upload only when the file is intact and its id checks out, and the
+same file pushed twice is kept once. With a token set, every request needs
+`Authorization: Bearer <token>` (`-open-read` lets anyone read); without one
+it refuses to listen beyond the machine. Its page lists the failures grouped
+by fingerprint and the latest instances, and its API is plain JSON:
+
+| Request | What it does |
+|---|---|
+| `POST /v1/instances` | Store the instance in the body (201 new, 200 already there, 422 edited, 413 over `-max-size`) |
+| `GET /v1/instances` | List the instances, newest first (`?failed=true` for failing ones) |
+| `GET /v1/instances/{id}` | Download one, by full id or a unique prefix of 12 or more hex digits |
+| `GET /v1/groups` | The failing instances grouped by fingerprint |
+
+```sh
+export CODEINSTANCES_STORE=http://127.0.0.1:7979 CODEINSTANCES_TOKEN=a-long-random-token
+codeinstances push failing.instance        # prints the id and the link
+codeinstances pull 3f2a9c1e77b0            # writes 3f2a9c1e77b0.instance and checks it
+codeinstances report failing.instance      # a Markdown bug report
+```
+
+`pull` checks that the file it gets is intact and is the one asked for.
+`report` writes a bug report to paste into an issue: the command, how the
+run ended, the last lines of its output, the calls that failed, the
+fingerprint, and the `pull`, `show` and `replay` commands that bring the run
+back. [docs/ci.md](docs/ci.md) shows a GitHub Actions job that records the
+tests and, when they fail, pushes the run and puts the report in the job
+summary.
+
 ### Commands
 
 | Command | What it does |
@@ -269,6 +310,10 @@ and `-json` prints the groups as JSON. It exits 0 whatever it finds.
 | `shrink [flags] -pass passing failing [-- command]` | Find the fewest failing answers that keep the failure, and keep that instance |
 | `test [flags] file-or-dir... [-- command]` | Replay instances as regression tests |
 | `group [flags] file-or-dir...` | Fingerprint failing runs and group the ones that fail the same way |
+| `serve [flags]` | Run a store that keeps instances under their ids |
+| `push [-to url] file-or-dir...` | Upload instances to a store |
+| `pull [-from url] [-o file] id` | Download an instance by id or unique prefix |
+| `report [-url store] file` | Write a Markdown bug report for an instance |
 | `show [-json] file` | Describe an instance |
 | `verify file` | Check the file hasn't been changed since it was recorded (exit 1 if it has) |
 | `version [-json]` | The version, the format version and the commit it was built from |
@@ -293,6 +338,14 @@ test (a minute by default); `-v` lists the notes of passing tests too;
 `-json` prints the results as JSON.
 
 `group` flags: `-v` lists every run of each group; `-json`.
+
+`serve` flags: `-dir` (default `instances`), `-addr` (default
+`127.0.0.1:7979`), `-token` (default `$CODEINSTANCES_TOKEN`), `-open-read`,
+`-max-size` in bytes (default 256 MiB). `push` and `pull` take `-to` or
+`-from` (default `$CODEINSTANCES_STORE`) and `-token`; `push -json` prints the
+results as JSON; `pull -o` names the file. `report -url` (default
+`$CODEINSTANCES_STORE`) adds the `pull` command; `-lines` sets how much output
+to show.
 
 `replay` flags: `-strict` requires HTTP requests in exactly the recorded order
 (by default each request gets the next recorded answer for the same method,
@@ -379,7 +432,10 @@ the shrunk failure in a folder and checks that `test` fails the program as it
 is and passes a fixed build that carries on when an item can't be read. It
 records two more failing runs, the item 7 bug again and then a second bug
 where the service refuses orders, and checks that `group` puts the three
-failing runs in two groups and leaves the passing one out.
+failing runs in two groups and leaves the passing one out. Last, it starts a
+store with a token on a loopback port, pushes the three failing runs, pulls
+one back by a 12-digit id prefix and compares the bytes, checks the store's
+grouping, and checks `report` says how to pull and replay the run.
 Progress goes to stderr and a JSON
 report to stdout; any failed check makes it exit 1.
 
@@ -413,12 +469,14 @@ value counts, notes that don't count, speed order), shrinking (two answers
 out of five found, refusals, the run limit, the shrunk file failing on
 replay), regression tests (match and pass, a fixed build), fingerprints
 (normalising, Go panics and fatal errors, go test output, Python, Node.js
-and Java traces, escape codes, failed calls, grouping), crashes,
+and Java traces, escape codes, failed calls, grouping), the store (ids and
+prefixes, edited and oversized uploads, tokens, the page escaping what runs
+print, a lying server caught by pull), bug reports, crashes,
 killed
 programs and timeouts, a recorder killed with SIGKILL leaving no file, and
 Ctrl-C reaching the program while the recorder finishes.
 
-## Limits in v0.4.0
+## Limits in v0.5.0
 
 - HTTP only. WebSocket, raw TCP and other protocols aren't recorded.
 - Bodies are buffered whole, up to 64 MiB each, so a streamed response reaches
@@ -456,6 +514,12 @@ Ctrl-C reaching the program while the recorder finishes.
   Calls are told apart by method and URL, not body, so every failing call to
   one GraphQL or JSON-RPC endpoint looks the same. Python exception groups
   and stack traces in other formats aren't read as traces.
+- The store is one server and one folder, with one token and no accounts.
+  Its lists and groups read every file each time, which suits thousands of
+  instances, not millions. It serves plain HTTP; put it behind an HTTPS proxy
+  to reach it over a network.
+- Nothing is scrubbed before a push or in a report beyond the redacted
+  headers: changing bodies or query strings would stop the run replaying.
 - Replay has no time limit unless you give `-timeout`, so give one when
   replaying a run that timed out.
 - The recording proxy listens on a loopback port with no password while the
@@ -465,9 +529,9 @@ Ctrl-C reaching the program while the recorder finishes.
 ## Where it goes next
 
 CodeInstances treats each run as an object you can do things to. This release
-does six of them: keep, replay, compare, shrink, test and group. Sharing and
-storing instances, forking a run at a step, and signed instances as proof of
-what ran are on the plan, in that rough order.
+does seven of them: keep, replay, compare, shrink, test, group and share.
+Forking a run at a step and signed instances as proof of what ran are next
+on the plan.
 
 ## Building and contributing
 

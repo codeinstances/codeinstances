@@ -243,6 +243,12 @@ func Save(path string, inst *Instance) error {
 	if err != nil {
 		return err
 	}
+	return WriteAtomic(path, data)
+}
+
+// WriteAtomic writes data to a temporary file next to path, syncs it and
+// renames it into place, so a reader sees the whole file or none of it.
+func WriteAtomic(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".*.tmp")
 	if err != nil {
@@ -272,7 +278,6 @@ func Save(path string, inst *Instance) error {
 	return nil
 }
 
-// Load reads an instance file, checks its format, its id and its contents.
 func Load(path string) (*Instance, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
