@@ -1,8 +1,8 @@
 {
   "tool": {
-    "version": "0.3.0",
+    "version": "0.4.0",
     "format": "codeinstances/0",
-    "revision": "3e86c43ea7f9fa2cadba2ab50e622417763f508a",
+    "revision": "ff55924f952ccbb778a540602da05051edd320eb",
     "modified": true,
     "go": "go1.24.7",
     "os": "linux",
@@ -13,7 +13,7 @@
     {
       "name": "record finishes and keeps the exit code",
       "passed": true,
-      "detail": "exit 0 codeinstances: kept /tmp/codeinstances-demo-4067724872/demo.instance (ccfefc5101a8: /tmp/tmp.RnV9o2RhnG/bin/codeinstances-demo -child, exit 0, 23 calls, 5 values, 44 ms)"
+      "detail": "exit 0 codeinstances: kept /tmp/codeinstances-demo-2279816474/demo.instance (3e85ca2b00fe: /tmp/tmp.RoeNifRikx/bin/codeinstances-demo -child, exit 0, 23 calls, 5 values, 75 ms)"
     },
     {
       "name": "every request reached the live servers and was kept",
@@ -40,6 +40,11 @@
       "detail": "exit 1"
     },
     {
+      "name": "two more failing runs are recorded",
+      "passed": true,
+      "detail": "exits [1 1]"
+    },
+    {
       "name": "live servers are down before replay",
       "passed": true
     },
@@ -55,7 +60,7 @@
     {
       "name": "an unhooked clock is caught",
       "passed": true,
-      "detail": "stdout line 1: recorded \"started 2026-10-18T10:32:49.804827138+03:00\", replayed \"started 2026-10-18T10:32:50.439534484+03:00\""
+      "detail": "stdout line 1: recorded \"started 2026-10-18T10:55:33.180416927+03:00\", replayed \"started 2026-10-18T10:55:34.016443157+03:00\""
     },
     {
       "name": "verify accepts the untouched file",
@@ -82,7 +87,7 @@
     {
       "name": "shrink narrows the failure to item 7's answer",
       "passed": true,
-      "detail": "1 of 22 differing answers needed, 10 runs"
+      "detail": "1 of 23 differing answers needed, 9 runs"
     },
     {
       "name": "test fails the build that still has the bug",
@@ -93,30 +98,37 @@
       "name": "test passes the fixed build",
       "passed": true,
       "detail": "codeinstances: 2 of 2 tests passed"
+    },
+    {
+      "name": "group puts repeats of one bug together",
+      "passed": true,
+      "detail": "3 failing runs in 2 groups"
     }
   ],
   "passed": true,
   "calls": 23,
   "values": 5,
-  "instance_file_bytes": 20617,
-  "record_ms": 58,
+  "instance_file_bytes": 20635,
+  "record_ms": 100,
   "replay_ms": [
-    47,
-    42,
+    51,
+    45,
     43,
-    40,
+    48,
+    46,
+    53,
     36,
-    42,
-    35,
-    44,
-    35,
-    37
+    37,
+    40,
+    40
   ],
   "diff_ms": 8,
-  "shrink_ms": 339,
-  "shrink_runs": 10,
-  "shrink_answers_changed": 22,
+  "shrink_ms": 286,
+  "shrink_runs": 9,
+  "shrink_answers_changed": 23,
   "shrink_answers_needed": 1,
-  "test_ms": 79,
+  "test_ms": 66,
+  "group_ms": 10,
+  "groups": 2,
   "live_server_requests": 23
 }

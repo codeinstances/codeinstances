@@ -1,13 +1,13 @@
 # Every test with the race detector
-# recorded 2026-10-18 07:31 UTC at 3e86c43, CodeInstances 0.3.0, go1.24.7 linux/amd64
+# recorded 2026-10-18 07:54 UTC at ff55924, CodeInstances 0.4.0, go1.24.7 linux/amd64
 # Linux 6.18.44-fc-v139, Intel(R) Xeon(R) Processor @ 2.10GHz, 2 CPUs
 # command: go test -race -count=1 ./...
 
-ok  	github.com/codeinstances/codeinstances	78.288s
-ok  	github.com/codeinstances/codeinstances/cmd/codeinstances	17.404s
-ok  	github.com/codeinstances/codeinstances/examples/demo	3.013s
-ok  	github.com/codeinstances/codeinstances/hook	11.293s
-ok  	github.com/codeinstances/codeinstances/instance	1.059s
+ok  	github.com/codeinstances/codeinstances	80.627s
+ok  	github.com/codeinstances/codeinstances/cmd/codeinstances	17.499s
+ok  	github.com/codeinstances/codeinstances/examples/demo	3.259s
+ok  	github.com/codeinstances/codeinstances/hook	11.322s
+ok  	github.com/codeinstances/codeinstances/instance	1.057s
 ?   	github.com/codeinstances/codeinstances/internal/buildinfo	[no test files]
-ok  	github.com/codeinstances/codeinstances/internal/ca	1.022s
-ok  	github.com/codeinstances/codeinstances/internal/capture	7.563s
+ok  	github.com/codeinstances/codeinstances/internal/ca	1.020s
+ok  	github.com/codeinstances/codeinstances/internal/capture	7.279s
