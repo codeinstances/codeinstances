@@ -57,6 +57,7 @@ Each element is one exchange. Version 0 has one kind, `"http"`.
 | `seq` | integer | 1, 2, 3 and so on, in the order requests arrived |
 | `kind` | string | `"http"` |
 | `at_ms` | integer | When the request arrived, in milliseconds since the run started |
+| `duration_ms` | integer, optional | How long the exchange took, in milliseconds, from the request's arrival to the end of the response or the error. Written from codeinstances 0.2.0 on; absent for a request over the size limit, which was never sent |
 | `request` | object | `method`, `url`, optional `header` and `body` |
 | `response` | object | `status`, optional `header` and `body` |
 | `error` | string | Set instead of `response` when the exchange failed; see below |
@@ -159,3 +160,6 @@ replay instances should behave the same way.
 Version 0 is the first. A version that changes the meaning of existing
 members gets a new format string; members added within a version must be
 safe for older readers to ignore.
+
+- codeinstances 0.2.0 added `duration_ms` to calls. Files written before it
+  don't have the member and stay valid.

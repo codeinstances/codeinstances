@@ -84,9 +84,13 @@ type Call struct {
 	Seq  int    `json:"seq"`
 	Kind string `json:"kind"`
 	// AtMS is when the request arrived, in milliseconds since the run started.
-	AtMS     int64     `json:"at_ms"`
-	Request  Request   `json:"request"`
-	Response *Response `json:"response,omitempty"`
+	AtMS int64 `json:"at_ms"`
+	// DurationMS is how long the exchange took, from the request's arrival
+	// to the end of the response or the error. Recordings made before
+	// version 0.2.0 don't have it.
+	DurationMS *int64    `json:"duration_ms,omitempty"`
+	Request    Request   `json:"request"`
+	Response   *Response `json:"response,omitempty"`
 	// Error is set when no response came back (the connection was refused,
 	// say). The program then got a 502 from codeinstances, in recording and
 	// in replay alike.
@@ -375,6 +379,9 @@ func (inst *Instance) Validate() error {
 		if c.Kind != KindHTTP {
 			return fmt.Errorf("call %d: unknown kind %q", c.Seq, c.Kind)
 		}
+		if c.DurationMS != nil && *c.DurationMS < 0 {
+			return fmt.Errorf("call %d: duration %d ms", c.Seq, *c.DurationMS)
+		}
 		if c.Request.Method == "" || c.Request.URL == "" {
 			return fmt.Errorf("call %d: request has no method or URL", c.Seq)
 		}
@@ -436,3 +443,6 @@ func short(id string) string {
 	}
 	return id
 }
+
+// ShortID is the first 12 hex digits of an id, enough to tell files apart.
+func ShortID(id string) string { return short(id) }

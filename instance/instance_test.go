@@ -342,3 +342,32 @@ func TestValidateBodiesAndValues(t *testing.T) {
 		}
 	}
 }
+
+func TestCallDuration(t *testing.T) {
+	inst := sample()
+	zero, d := int64(0), int64(37)
+	inst.Calls[0].DurationMS = &zero
+	inst.Calls[1].DurationMS = &d
+	path := filepath.Join(t.TempDir(), "d.instance")
+	if err := Save(path, inst); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	// A zero duration is kept, not dropped as empty.
+	if bytes.Count(data, []byte(`"duration_ms"`)) != 3 {
+		t.Fatalf("%s", data)
+	}
+	back, err := Load(path)
+	if err != nil || *back.Calls[0].DurationMS != 0 || *back.Calls[1].DurationMS != 37 {
+		t.Fatal(err)
+	}
+	// Recordings without it, made before 0.2.0, still read.
+	if s := sample(); s.Calls[0].DurationMS != nil || s.Validate() != nil {
+		t.Fatal("no duration")
+	}
+	neg := int64(-1)
+	inst.Calls[0].DurationMS = &neg
+	if inst.Validate() == nil {
+		t.Fatal("a negative duration was accepted")
+	}
+}

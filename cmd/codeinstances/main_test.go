@@ -271,3 +271,46 @@ func TestShowJSONIsTheFileItself(t *testing.T) {
 		t.Fatal("show -json changed the file")
 	}
 }
+
+func TestDiff(t *testing.T) {
+	dir := t.TempDir()
+	a := filepath.Join(dir, "a.instance")
+	b := filepath.Join(dir, "b.instance")
+	t.Setenv("CI_CMD_CHILD", "hello")
+	t.Setenv("CI_CMD_EXIT", "0")
+	cli(t, append([]string{"record", "-q", "-o", a, "--"}, childArgs()...)...)
+	t.Setenv("CI_CMD_EXIT", "3")
+	cli(t, append([]string{"record", "-q", "-o", b, "--"}, childArgs()...)...)
+
+	out, _, code := cli(t, "diff", a, a)
+	if code != 0 || !strings.Contains(out, "codeinstances: the runs are the same") || !strings.Contains(out, "calls  0 the same") {
+		t.Fatalf("%d\n%s", code, out)
+	}
+	out, _, code = cli(t, "diff", a, b)
+	for _, want := range []string{"a  " + a, "b  " + b, "ended: a exit 0, b exit 3", "stdout line 1: a \"hello ", "speed  a "} {
+		if code != 1 || !strings.Contains(out, want) {
+			t.Fatalf("diff lacks %q (exit %d):\n%s", want, code, out)
+		}
+	}
+	// The random value differs, but only its count is compared by default.
+	if strings.Contains(out, "random value 1") {
+		t.Fatal(out)
+	}
+	if out, _, _ := cli(t, "diff", "-values", a, b); !strings.Contains(out, "random value 1: a ") {
+		t.Fatal(out)
+	}
+	out, _, code = cli(t, "diff", "-json", a, b)
+	var c codeinstances.Comparison
+	if code != 1 || json.Unmarshal([]byte(out), &c) != nil || c.Same || c.A.Ended != "exit 0" || c.B.Ended != "exit 3" {
+		t.Fatalf("%d %s", code, out)
+	}
+
+	data, _ := os.ReadFile(b)
+	edited := filepath.Join(dir, "edited.instance")
+	os.WriteFile(edited, bytes.Replace(data, []byte(`"exit_code": 3`), []byte(`"exit_code": 0`), 1), 0o600)
+	for _, args := range [][]string{{"diff"}, {"diff", a}, {"diff", a, b, a}, {"diff", a, edited}, {"diff", a, filepath.Join(dir, "missing")}, {"diff", "-nope", a, b}} {
+		if _, _, code := cli(t, args...); code != 2 {
+			t.Errorf("%v: exit %d, want 2", args, code)
+		}
+	}
+}

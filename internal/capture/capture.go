@@ -365,7 +365,8 @@ func (p *Proxy) exchange(w http.ResponseWriter, r *http.Request, target string) 
 		}
 		p.mu.Unlock()
 	}()
-	at := time.Since(p.start).Milliseconds()
+	arrived := time.Now()
+	at := arrived.Sub(p.start).Milliseconds()
 	body, err := readLimited(r.Body)
 	tooLarge := err != nil
 	if p.replay {
@@ -387,7 +388,7 @@ func (p *Proxy) exchange(w http.ResponseWriter, r *http.Request, target string) 
 		writeError(w, call.Error)
 		return
 	}
-	p.forward(w, r, target, body, at)
+	p.forward(w, r, target, body, at, arrived)
 }
 
 // ErrRequestTooLarge is the error kept for a request whose body was over
@@ -404,13 +405,15 @@ func callKey(c instance.Call) string {
 }
 
 // forward passes the request on, keeps the exchange, and returns the answer.
-func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, target string, body []byte, at int64) {
+func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, target string, body []byte, at int64, arrived time.Time) {
 	p.mu.Lock()
 	p.seq++
 	call := instance.Call{Seq: p.seq, Kind: instance.KindHTTP, AtMS: at}
 	p.mu.Unlock()
 	call.Request = instance.Request{Method: r.Method, URL: target, Header: p.keep(passable(r.Header)), Body: instance.NewBody(body)}
 	defer func() {
+		d := time.Since(arrived).Milliseconds()
+		call.DurationMS = &d
 		p.mu.Lock()
 		p.calls = append(p.calls, call)
 		p.mu.Unlock()

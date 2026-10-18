@@ -1,6 +1,6 @@
 # CodeInstances
 
-Keep a run of any program as a file, and replay it.
+Keep a run of any program as a file, replay it, and compare it with another.
 
 Your code is versioned, reviewed and stored. Its runs are thrown away: a
 test fails in CI, the rerun passes, and the bug is gone. CodeInstances keeps
@@ -10,11 +10,14 @@ HTTP and HTTPS exchange it made, and every clock or random value it asked for
 through the hook package. The result is an instance, one JSON file in an open
 format. `codeinstances replay` runs the program again with the network
 replaced by the recording and tells you whether it came out the same.
+`codeinstances diff` puts two runs side by side, a passing one and a failing
+one say, and shows where they part ways and which calls got slower.
 
-**Status: v0.1.0, an early release.** Recording, offline replay, divergence
-reports, the Go hook package, the open format and its integrity check work and
-are tested on Linux and macOS, with the release binaries also checked on
-Windows. The limits are listed [below](#limits-in-v010). Open source under the
+**Status: v0.2.0, an early release.** Recording, offline replay, divergence
+reports, comparing two runs, the Go hook package, the open format and its
+integrity check work and are tested on Linux and macOS, with the release
+binaries also checked on Windows. The limits are listed
+[below](#limits-in-v020). Open source under the
 Apache License 2.0.
 
 ## Download
@@ -87,12 +90,54 @@ against a recorded failure, replay a different command against the same file:
 codeinstances replay failing.instance -- ./myprogram-fixed --same --flags
 ```
 
+### Comparing two runs
+
+Record the run that works and the run that doesn't, then compare them:
+
+```sh
+codeinstances diff passing.instance failing.instance
+```
+
+```
+a  passing.instance  4ce1a702a3a7, recorded 2026-10-18 06:54 UTC
+   exit 0 after 180 ms, 2 calls, 2 values
+b  failing.instance  01f75a212d4c, recorded 2026-10-18 07:12 UTC
+   exit 1 after 940 ms, 3 calls, 2 values
+calls  1 the same, 1 changed, 0 only in a, 1 only in b
+speed  a 180 ms, b 940 ms (+760 ms, 5.22x)
+       calls whose time changed most:
+         +731 ms  GET https://api.example.com/v1/items (a call 1: 42 ms, b call 1: 773 ms)
+codeinstances: the runs differ in 4 ways:
+  - ended: a exit 0, b exit 1
+  - stdout line 2: a "12 items", b "error: no items"
+  - GET https://api.example.com/v1/items (a call 1, b call 1): response body at $.items: 12 items in a, 0 in b
+  - GET https://api.example.com/v1/retry (b call 3) is only in b
+```
+
+Calls are paired by method, URL and request body, in order, and those left
+over by method and URL alone, so a request whose body changed shows up as a
+change instead of one call missing and one extra. For each pair, `diff`
+compares the status and the response body: JSON bodies by member, down to the
+first value that differs, other text by line, binary bodies by size. Headers
+aren't compared, since they carry dates and other noise. How the runs ended
+and what they printed are compared too.
+
+Two separate runs read different clocks and draw different random numbers,
+so by default `diff` compares only how many values of each kind each run
+asked for; `-values` compares the values themselves. A different command,
+kept environment or tool version is shown as a note, not counted as a
+difference. Speed is shown but never counted: the whole run's time, and for
+recordings made with 0.2.0 or later, the calls whose time changed most.
+
+`diff` exits 0 when the runs are the same and 1 when they differ.
+
 ### Commands
 
 | Command | What it does |
 |---|---|
 | `record [flags] -- command [args...]` | Run the command and keep the run (`-o` names the file, `run.instance` by default) |
 | `replay [flags] file [-- command [args...]]` | Run it again against the recording and compare |
+| `diff [flags] a b` | Compare two instances: how they ended, their output, calls, values and speed |
 | `show [-json] file` | Describe an instance |
 | `verify file` | Check the file hasn't been changed since it was recorded (exit 1 if it has) |
 | `version [-json]` | The version, the format version and the commit it was built from |
@@ -102,6 +147,9 @@ replay; `-resolve host=addr` sends a host name to another address, like curl's
 `--resolve`; `-upstream-ca file.pem` trusts extra certificates when reaching
 real servers; `-keep-secrets` keeps the headers that are redacted by default;
 `-timeout 30s` kills the program after that long; `-q` hides its output.
+
+`diff` flags: `-values` compares the clock and random values themselves;
+`-ignore-stderr` leaves stderr out; `-json` prints the comparison as JSON.
 
 `replay` flags: `-strict` requires HTTP requests in exactly the recorded order
 (by default each request gets the next recorded answer for the same method,
@@ -178,7 +226,10 @@ them, 20 of them from parallel goroutines, and takes 5 clock and random values
 through the hook package. Then it stops both servers and replays the instance
 10 times. Every replay has to match. It then replays two changed programs (one
 makes an extra request, one prints the real clock) and checks both are caught,
-and checks `verify` catches an edited file. Progress goes to stderr and a JSON
+and checks `verify` catches an edited file. Last, it compares the instance
+with a second run, recorded while the servers were up, of the program that
+makes one extra request, and checks `diff` finds that request and times every
+call the two runs share. Progress goes to stderr and a JSON
 report to stdout; any failed check makes it exit 1.
 
 `sh scripts/record-tests.sh` runs every test, the race detector, the demo and
@@ -204,7 +255,7 @@ a missing request, an extra random value, an unhooked clock), crashes, killed
 programs and timeouts, a recorder killed with SIGKILL leaving no file, and
 Ctrl-C reaching the program while the recorder finishes.
 
-## Limits in v0.1.0
+## Limits in v0.2.0
 
 - HTTP only. WebSocket, raw TCP and other protocols aren't recorded.
 - Bodies are buffered whole, up to 64 MiB each, so a streamed response reaches
@@ -228,6 +279,9 @@ Ctrl-C reaching the program while the recorder finishes.
   the start, so values are recorded and replayed exactly for one hooked
   process at a time.
 - Output is kept up to 16 MiB per stream.
+- `diff` compares a call's status and body, not its headers.
+- `diff` doesn't report cost (money, tokens or data sent); it reports
+  differences and time.
 - Replay has no time limit unless you give `-timeout`, so give one when
   replaying a run that timed out.
 - The recording proxy listens on a loopback port with no password while the
@@ -237,10 +291,10 @@ Ctrl-C reaching the program while the recorder finishes.
 ## Where it goes next
 
 CodeInstances treats each run as an object you can do things to. This release
-does two of them, keep and replay. Comparing two runs, shrinking a failing run
-to the smallest one that still fails, turning recorded runs into regression
-tests, grouping repeated failures, and signed instances as proof of what ran
-are on the plan, in that rough order.
+does three of them: keep, replay and compare. Shrinking a failing run to the
+smallest one that still fails, turning recorded runs into regression tests,
+grouping repeated failures, and signed instances as proof of what ran are on
+the plan, in that rough order.
 
 ## Building and contributing
 

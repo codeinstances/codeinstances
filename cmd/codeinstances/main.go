@@ -6,6 +6,7 @@
 //
 //	codeinstances record [flags] -- command [args...]
 //	codeinstances replay [flags] file [-- command [args...]]
+//	codeinstances diff [flags] a.instance b.instance
 //	codeinstances show [-json] file
 //	codeinstances verify file
 //	codeinstances version [-json]
@@ -37,15 +38,19 @@ Usage:
   codeinstances replay [flags] file [-- command [args...]]
       Run the recorded command again (or the one given) with the network
       replaced by the recording, and report whether it came out the same.
+  codeinstances diff [flags] a.instance b.instance
+      Compare two runs, such as a passing one and a failing one: how they
+      ended, what they printed, their calls and values, and their speed.
   codeinstances show [-json] file
       Describe an instance.
   codeinstances verify file
       Check that an instance file hasn't been changed since it was recorded.
   codeinstances version [-json]
 
-Run "codeinstances record -h" or "codeinstances replay -h" for their flags.
+Run "codeinstances record -h", "replay -h" or "diff -h" for their flags.
 Exit status: record exits as the program did; replay exits 0 when the run
-matched, 1 when it diverged; anything else is 2 on a usage or file error.
+matched, 1 when it diverged; diff exits 0 when the runs are the same, 1 when
+they differ; any command exits 2 on a usage or file error.
 `
 
 func main() {
@@ -62,6 +67,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return record(args[1:], stdout, stderr)
 	case "replay":
 		return replay(args[1:], stdout, stderr)
+	case "diff":
+		return diff(args[1:], stdout, stderr)
 	case "show":
 		return show(args[1:], stdout, stderr)
 	case "verify":
@@ -220,6 +227,104 @@ func printReport(w io.Writer, rep *codeinstances.Report) {
 	}
 }
 
+// maxListed is how many differences diff prints before summing up the rest.
+const maxListed = 50
+
+func diff(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("diff", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	noStderr := fs.Bool("ignore-stderr", false, "leave stderr out of the comparison")
+	values := fs.Bool("values", false, "compare the clock and random values themselves, not only how many of each")
+	asJSON := fs.Bool("json", false, "print the comparison as JSON")
+	fs.Usage = func() {
+		fmt.Fprintln(stderr, "usage: codeinstances diff [flags] a.instance b.instance")
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() != 2 {
+		fs.Usage()
+		return 2
+	}
+	var insts [2]*instance.Instance
+	for i := range insts {
+		inst, err := instance.Load(fs.Arg(i))
+		if err != nil {
+			fmt.Fprintf(stderr, "codeinstances diff: %v\n", err)
+			return 2
+		}
+		insts[i] = inst
+	}
+	c := codeinstances.Compare(insts[0], insts[1], codeinstances.CompareOptions{IgnoreStderr: *noStderr, Values: *values})
+	if *asJSON {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		enc.Encode(c)
+	} else {
+		printComparison(stdout, fs.Arg(0), fs.Arg(1), c)
+	}
+	if c.Same {
+		return 0
+	}
+	return 1
+}
+
+func printComparison(w io.Writer, nameA, nameB string, c *codeinstances.Comparison) {
+	for _, s := range []struct {
+		label, name string
+		side        codeinstances.Side
+	}{{"a", nameA, c.A}, {"b", nameB, c.B}} {
+		fmt.Fprintf(w, "%s  %s  %s, recorded %s\n", s.label, s.name, instance.ShortID(s.side.ID), s.side.Created.UTC().Format("2006-01-02 15:04 UTC"))
+		fmt.Fprintf(w, "   %s after %d ms, %d calls, %d values\n", s.side.Ended, s.side.DurationMS, s.side.Calls, s.side.Values)
+	}
+	k := c.Calls
+	fmt.Fprintf(w, "calls  %d the same, %d changed, %d only in a, %d only in b\n", k.Same, k.Changed, k.OnlyA, k.OnlyB)
+	for _, n := range c.Notes {
+		fmt.Fprintf(w, "note   %s\n", n)
+	}
+	sp := c.Speed
+	fmt.Fprintf(w, "speed  a %d ms, b %d ms (%s)\n", sp.ADurationMS, sp.BDurationMS, change(sp.ADurationMS, sp.BDurationMS))
+	shown := 0
+	for _, cs := range sp.Calls {
+		if shown == 5 || cs.AMS == cs.BMS {
+			break
+		}
+		if shown == 0 {
+			fmt.Fprintln(w, "       calls whose time changed most:")
+		}
+		fmt.Fprintf(w, "       %+6d ms  %s %s (a call %d: %d ms, b call %d: %d ms)\n", cs.BMS-cs.AMS, cs.Method, cs.URL, cs.ASeq, cs.AMS, cs.BSeq, cs.BMS)
+		shown++
+	}
+	if c.Same {
+		fmt.Fprintln(w, "codeinstances: the runs are the same")
+		return
+	}
+	way := "ways"
+	if len(c.Differences) == 1 {
+		way = "way"
+	}
+	fmt.Fprintf(w, "codeinstances: the runs differ in %d %s:\n", len(c.Differences), way)
+	for i, d := range c.Differences {
+		if i == maxListed {
+			fmt.Fprintf(w, "  ... and %d more (diff -json lists them all)\n", len(c.Differences)-maxListed)
+			break
+		}
+		fmt.Fprintf(w, "  - %s\n", d)
+	}
+}
+
+// change describes how long b took next to a.
+func change(a, b int64) string {
+	switch {
+	case a == b:
+		return "no change"
+	case a > 0:
+		return fmt.Sprintf("%+d ms, %.2fx", b-a, float64(b)/float64(a))
+	}
+	return fmt.Sprintf("%+d ms", b-a)
+}
+
 func show(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("show", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -261,10 +366,14 @@ func show(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "output    %d bytes on stdout, %d on stderr\n", len(r.Stdout.MustBytes()), len(r.Stderr.MustBytes()))
 	fmt.Fprintf(stdout, "calls     %d\n", len(inst.Calls))
 	for _, c := range inst.Calls {
+		took := ""
+		if c.DurationMS != nil {
+			took = fmt.Sprintf(" in %d ms", *c.DurationMS)
+		}
 		if c.Error != "" {
-			fmt.Fprintf(stdout, "  %3d  %6d ms  %s %s -> error: %s\n", c.Seq, c.AtMS, c.Request.Method, c.Request.URL, c.Error)
+			fmt.Fprintf(stdout, "  %3d  %6d ms  %s %s -> error%s: %s\n", c.Seq, c.AtMS, c.Request.Method, c.Request.URL, took, c.Error)
 		} else {
-			fmt.Fprintf(stdout, "  %3d  %6d ms  %s %s -> %d (%d bytes)\n", c.Seq, c.AtMS, c.Request.Method, c.Request.URL, c.Response.Status, len(c.Response.Body.MustBytes()))
+			fmt.Fprintf(stdout, "  %3d  %6d ms  %s %s -> %d (%d bytes)%s\n", c.Seq, c.AtMS, c.Request.Method, c.Request.URL, c.Response.Status, len(c.Response.Body.MustBytes()), took)
 		}
 	}
 	counts := map[string]int{}

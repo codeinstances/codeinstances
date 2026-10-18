@@ -60,6 +60,7 @@ type report struct {
 	FileBytes   int64            `json:"instance_file_bytes"`
 	RecordMS    int64            `json:"record_ms"`
 	ReplayMS    []int64          `json:"replay_ms"`
+	DiffMS      int64            `json:"diff_ms"`
 	ServerCalls int              `json:"live_server_requests"`
 }
 
@@ -296,6 +297,18 @@ func demo(cli string, replays int) (*report, error) {
 	stdout := string(inst.Result.Stdout.MustBytes())
 	add("the program saw HTTPS and HTTP answers", strings.Contains(stdout, "order 201") && strings.Contains(stdout, `status 200 {"ok":true`), "")
 
+	// A second run, of a program that makes one request more, to compare.
+	second := filepath.Join(work, "second.instance")
+	_, code, err = runCLI(cli, "record", "-q", "-o", second,
+		"-resolve", secureHost+"="+secureAddr, "-resolve", plainHost+"="+plainAddr,
+		"-upstream-ca", caFile, "--", self, "-child", "-extra")
+	if err != nil {
+		return rep, err
+	}
+	if code != 0 {
+		add("a second run is recorded", false, fmt.Sprintf("exit %d", code))
+	}
+
 	// From here on nothing is listening.
 	srv.stop()
 	if c, err := net.DialTimeout("tcp", secureAddr, time.Second); err == nil {
@@ -351,6 +364,37 @@ func demo(cli string, replays int) (*report, error) {
 		return rep, err
 	}
 	add("verify catches an edited file", !bytes.Equal(data, changed) && code == 1, "")
+
+	out, code, err = runCLI(cli, "diff", "-json", file, file)
+	if err != nil {
+		return rep, err
+	}
+	add("diff finds a run the same as itself", code == 0 && strings.Contains(out, `"same": true`), "")
+	t = time.Now()
+	out, code, err = runCLI(cli, "diff", "-json", file, second)
+	rep.DiffMS = time.Since(t).Milliseconds()
+	if err != nil {
+		return rep, err
+	}
+	var cmp struct {
+		Calls struct {
+			Changed int `json:"changed"`
+			OnlyA   int `json:"only_a"`
+			OnlyB   int `json:"only_b"`
+		} `json:"calls"`
+		Differences []string `json:"differences"`
+		Speed       struct {
+			Calls []json.RawMessage `json:"calls"`
+		} `json:"speed"`
+	}
+	json.Unmarshal([]byte(out), &cmp)
+	extraFound := false
+	for _, d := range cmp.Differences {
+		extraFound = extraFound || strings.Contains(d, "/quote?again=1 (b call") && strings.HasSuffix(d, "is only in b")
+	}
+	add("diff finds the extra request in a second run", code == 1 && extraFound && cmp.Calls.OnlyA == 0 && cmp.Calls.OnlyB == 1,
+		fmt.Sprintf("%d differences, %d calls changed, %d only in b", len(cmp.Differences), cmp.Calls.Changed, cmp.Calls.OnlyB))
+	add("diff times every paired call", len(cmp.Speed.Calls) == 3+parallel, fmt.Sprintf("%d calls timed in both runs", len(cmp.Speed.Calls)))
 	return finish(rep), nil
 }
 

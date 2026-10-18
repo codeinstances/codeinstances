@@ -13,7 +13,7 @@
 # replayed offline, changes caught, an edited file caught); and a Python
 # program that isn't hooked at all is recorded against a live local server,
 # the server stopped, and the run replayed with show and verify working on
-# the file.
+# the file, and diff telling it apart from a second run.
 import http.server
 import json
 import os
@@ -98,11 +98,20 @@ def smoke(bin_dir, version):
         file = Path(work) / "python.instance"
         rec = run([cli, "record", "-q", "-o", file, "--", sys.executable, script])
         require("2 calls" in rec.stderr, f"record: {rec.stderr}")
+        second = Path(work) / "second.instance"
+        run([cli, "record", "-q", "-o", second, "--", sys.executable, script])
         server.shutdown()
         server.server_close()
         rep = json.loads(run([cli, "replay", "-json", file]).stdout)
         require(rep["matched"] and rep["calls_served"] == 2, f"replay: {rep}")
         print("ok   an unhooked Python program replays offline")
+        same = run([cli, "diff", file, file])
+        require("the runs are the same" in same.stdout, f"diff of a file with itself: {same.stdout}")
+        cmp = run([cli, "diff", "-json", file, second], check=False)
+        require(cmp.returncode == 1, f"diff exited {cmp.returncode}: {cmp.stderr}")
+        found = json.loads(cmp.stdout)
+        require(found["calls"]["changed"] == 2 and any("response body at $.at: a " in d for d in found["differences"]), f"diff: {found}")
+        print("ok   diff tells two runs apart, down to the JSON member")
         shown = run([cli, "show", file]).stdout
         require("GET " + url + "/two?x=1 -> 200" in shown, f"show: {shown}")
         require("intact" in run([cli, "verify", file]).stdout, "verify")
