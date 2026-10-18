@@ -12,7 +12,7 @@ has the procedure and the checks to run afterwards.
 
 ## Where things stand
 
-v0.1.0 to v0.6.0 are the releases so far (all October 2026):
+v0.1.0 to v0.7.0 are the releases so far (all October 2026):
 Apache 2.0, CI on Linux and macOS plus a Windows smoke check, and automated
 releases with smoke-tested binaries for Linux, macOS and Windows. Pure Go,
 standard library only, no cgo.
@@ -44,6 +44,14 @@ fork: `codeinstances fork -at N` (`fork.go`; the proxy's forking mode in
 `internal/capture`) answers the parent's calls before step N and runs live
 (or `-offline`, or with an `-answer` given at the step) from there; forks
 carry `fork` {parent, at} and calls `from_seq` / `given` (additive members).
+v0.7.0 adds proof: `instance/sign.go` (optional `signatures`, Ed25519 over
+the content id, which is the id with `signatures` removed too; the file id
+still covers them, so older readers read signed files; canonical base64
+only, no extra members, at most 16), `keys.go` (keygen, PKCS #8 keys refused
+when group/others can read them, trust files), commands `keygen`, `sign`,
+`verify -trust`, `record`/`fork -sign`, `serve -trust`, `pull -trust`;
+`sign` refuses files with members it doesn't know; docs/example-signed.instance
+is a test vector (seed 1..32).
 The Go
 `hook` package records and replays clock and random values. The open file
 format is [docs/FORMAT.md](docs/FORMAT.md) (`codeinstances/0`); change it only
@@ -56,7 +64,7 @@ canonical id, atomic save), `internal/capture/` (the proxy), `internal/ca/`
 (per-run authority), `hook/`, `cmd/codeinstances/`, `examples/demo/` (the
 self-checking demo), `scripts/` (smoke check, release plan, record-tests).
 
-The README's "Limits in v0.6.0" section is the honest list of what isn't
+The README's "Limits in v0.7.0" section is the honest list of what isn't
 covered; keep it true.
 
 ## Long-range plan (agreed with the owner, October 2026)
@@ -73,7 +81,8 @@ Each phase adds one verb, ships as its own release and stands on its own:
 5. Share and store: stable IDs, shareable runnable bug reports, a simple
    self-hosted store, CI integration (done in v0.5.0).
 6. Fork an instance at a step and run on from there (done in v0.6.0).
-7. Proof: signed, tamper-evident instances (AI agent accountability, audit).
+7. Proof: signed, tamper-evident instances (AI agent accountability, audit)
+   (done in v0.7.0).
 8. Run instances on demand (FaaS sense). Optional, the heaviest.
 
 Each release gets a plain-language post on the site. Agents are a use case,
@@ -107,5 +116,6 @@ the site's posts, following that repo's CONTENT-PLAN.md (2.8).
 
 ## Next
 
-Phase 7 (proof: signed, tamper-evident instances) is next on the plan but
-not agreed yet. Agree it with the owner before it goes here.
+Phase 8 (run instances on demand, in the FaaS sense; optional, the heaviest)
+is the last item on the plan and not agreed yet. Agree it with the owner
+before it goes here.

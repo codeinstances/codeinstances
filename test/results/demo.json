@@ -1,8 +1,8 @@
 {
   "tool": {
-    "version": "0.6.0",
+    "version": "0.7.0",
     "format": "codeinstances/0",
-    "revision": "e6ad0d76b061c848deca892dc5c9ef9702b812b3",
+    "revision": "bbc71e6422ffc8e07a15b987461dfb67600ca8f8",
     "modified": true,
     "go": "go1.24.7",
     "os": "linux",
@@ -13,7 +13,7 @@
     {
       "name": "record finishes and keeps the exit code",
       "passed": true,
-      "detail": "exit 0 codeinstances: kept /tmp/codeinstances-demo-100929465/demo.instance (e6b004a3d992: /tmp/tmp.xqgNfkyyAa/bin/codeinstances-demo -child, exit 0, 23 calls, 5 values, 42 ms)"
+      "detail": "exit 0 codeinstances: kept /tmp/codeinstances-demo-209470629/demo.instance (c5e0df3245e2: /tmp/tmp.h6PtKjmyto/bin/codeinstances-demo -child, exit 0, 23 calls, 5 values, 61 ms)"
     },
     {
       "name": "every request reached the live servers and was kept",
@@ -60,7 +60,7 @@
     {
       "name": "an unhooked clock is caught",
       "passed": true,
-      "detail": "stdout line 1: recorded \"started 2026-10-18T12:03:02.821302859+03:00\", replayed \"started 2026-10-18T12:03:03.481229839+03:00\""
+      "detail": "stdout line 1: recorded \"started 2026-10-18T12:33:04.884895511+03:00\", replayed \"started 2026-10-18T12:33:05.729778041+03:00\""
     },
     {
       "name": "verify accepts the untouched file",
@@ -77,7 +77,7 @@
     {
       "name": "diff finds the extra request in a second run",
       "passed": true,
-      "detail": "25 differences, 22 calls changed, 1 only in b"
+      "detail": "26 differences, 23 calls changed, 1 only in b"
     },
     {
       "name": "diff times every paired call",
@@ -87,7 +87,7 @@
     {
       "name": "shrink narrows the failure to item 7's answer",
       "passed": true,
-      "detail": "1 of 23 differing answers needed, 9 runs"
+      "detail": "1 of 22 differing answers needed, 11 runs"
     },
     {
       "name": "test fails the build that still has the bug",
@@ -124,40 +124,60 @@
     {
       "name": "fork with a given answer runs the what-if offline",
       "passed": true,
-      "detail": "codeinstances: kept /tmp/codeinstances-demo-100929465/what-if.instance (30f4ff857d01: /tmp/tmp.xqgNfkyyAa/bin/codeinstances-demo -child, exit 1, 2 calls, 3 values, 15 ms)"
+      "detail": "codeinstances: kept /tmp/codeinstances-demo-209470629/what-if.instance (3a71669e0189: /tmp/tmp.h6PtKjmyto/bin/codeinstances-demo -child, exit 1, 2 calls, 3 values, 13 ms)"
     },
     {
       "name": "fork past the last call answers every call from the parent and comes out the same",
+      "passed": true
+    },
+    {
+      "name": "sign vouches for a run and verify -trust accepts the signer's key",
+      "passed": true,
+      "detail": "    key OtmzB5J7lMdRzhv087qEAh0fulX2/sdHfLNzb4Xij+o="
+    },
+    {
+      "name": "verify -trust refuses an unsigned run and one signed by a key it doesn't trust",
+      "passed": true
+    },
+    {
+      "name": "an edited run with a fresh id still fails, on its signature",
+      "passed": true,
+      "detail": "codeinstances verify: /tmp/codeinstances-demo-209470629/forged.instance: signature 1 (key cb535662feda0e62): a signature doesn't check out: the run was changed after it was signed, or the signature wasn't made by its key"
+    },
+    {
+      "name": "a store started with trusted keys refuses the unsigned run and takes the signed one",
       "passed": true
     }
   ],
   "passed": true,
   "calls": 23,
   "values": 5,
-  "instance_file_bytes": 20616,
-  "record_ms": 59,
+  "instance_file_bytes": 20625,
+  "record_ms": 83,
   "replay_ms": [
-    32,
-    35,
-    36,
-    36,
-    36,
-    42,
-    36,
+    44,
+    40,
     37,
-    37,
-    36
+    40,
+    39,
+    44,
+    45,
+    47,
+    47,
+    46
   ],
-  "diff_ms": 7,
-  "shrink_ms": 294,
-  "shrink_runs": 9,
-  "shrink_answers_changed": 23,
+  "diff_ms": 12,
+  "shrink_ms": 383,
+  "shrink_runs": 11,
+  "shrink_answers_changed": 22,
   "shrink_answers_needed": 1,
-  "test_ms": 71,
+  "test_ms": 78,
   "group_ms": 11,
   "groups": 2,
-  "push_ms": 19,
-  "fork_ms": 25,
-  "pull_ms": 6,
+  "push_ms": 16,
+  "fork_ms": 20,
+  "pull_ms": 4,
+  "sign_ms": 6,
+  "verify_ms": 3,
   "live_server_requests": 23
 }

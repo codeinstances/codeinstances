@@ -1,10 +1,10 @@
 # The release smoke check on binaries built as the release workflow builds them
-# recorded 2026-10-18 09:03 UTC at e6ad0d7, CodeInstances 0.6.0, go1.24.7 linux/amd64
+# recorded 2026-10-18 09:33 UTC at bbc71e6, CodeInstances 0.7.0, go1.24.7 linux/amd64
 # Linux 6.18.44-fc-v139, Intel(R) Xeon(R) Processor @ 2.10GHz, 2 CPUs
 # command: python3 scripts/smoke.py BIN
 
-ok   codeinstances 0.6.0 (linux/amd64, commit e6ad0d76b061)
-ok   demo: 26 checks passed, 23 calls, 5 values
+ok   codeinstances 0.7.0 (linux/amd64, commit bbc71e6422ff)
+ok   demo: 30 checks passed, 23 calls, 5 values
 ok   an unhooked Python program replays offline
 ok   diff tells two runs apart, down to the JSON member
 ok   the Python run passes as a regression test
@@ -12,5 +12,6 @@ ok   fork answers the first call from the parent and sends nothing offline
 ok   group counts the passing runs and groups none
 ok   group puts two Python crashes with different messages in one group
 ok   serve, push, pull and report round trip
+ok   keygen, sign and verify -trust
 ok   show, verify and an edited file
 smoke check passed
