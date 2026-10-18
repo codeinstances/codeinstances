@@ -60,7 +60,7 @@ func TestShrinkFindsTheAnswersThatMatter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, progress.String())
 	}
-	if res.Changed != 5 || len(res.Needed) != 2 || !res.Minimal || res.Failure != "exit 1" {
+	if res.Changed != 5 || len(res.Needed) != 2 || !res.Minimal || !res.Pruned || res.FailingOnly != 1 || res.Failure != "exit 1" {
 		t.Fatalf("%+v\n%s", res, progress.String())
 	}
 	for i, want := range []string{"https://secure.test/3 (failing call 3)", "https://secure.test/5 (failing call 5)"} {
@@ -110,6 +110,11 @@ func TestShrinkRefusesWhatItCannotShrink(t *testing.T) {
 	if _, err := Shrink(context.Background(), fail, fail, ShrinkOptions{Timeout: time.Minute}); !errors.Is(err, ErrNotTheAnswers) {
 		t.Fatal(err)
 	}
+	// When the cause is in a call only the failing run made, it says so.
+	short := recordedResult(t, sixCalls(t, []string{"good", "good"}))
+	if _, err := Shrink(context.Background(), short, fail, ShrinkOptions{Timeout: time.Minute}); !errors.Is(err, ErrNotTheAnswers) || !strings.Contains(err.Error(), "the 5 calls only the failing run made") {
+		t.Fatal(err)
+	}
 	// A run that exited 0 isn't a failure unless Match says what is.
 	if _, err := Shrink(context.Background(), fail, pass, ShrinkOptions{Timeout: time.Minute}); !errors.Is(err, ErrNotAFailure) {
 		t.Fatal(err)
@@ -119,7 +124,7 @@ func TestShrinkRefusesWhatItCannotShrink(t *testing.T) {
 	if err != nil || len(res.Needed) != 2 {
 		t.Fatal(err)
 	}
-	if _, err := Shrink(context.Background(), pass, fail, ShrinkOptions{Timeout: time.Minute, Match: regexp.MustCompile("no such text")}); !errors.Is(err, ErrFailureDoesNotReplay) {
+	if _, err := Shrink(context.Background(), pass, fail, ShrinkOptions{Timeout: time.Minute, Match: regexp.MustCompile("no such text")}); !errors.Is(err, ErrFailureDoesNotReplay) || !strings.Contains(err.Error(), "didn't print the match") {
 		t.Fatal(err)
 	}
 }
@@ -127,12 +132,17 @@ func TestShrinkRefusesWhatItCannotShrink(t *testing.T) {
 func TestShrinkStopsAtTheRunLimit(t *testing.T) {
 	pass := recordedResult(t, sixCalls(t, []string{"good", "good", "good", "good", "good", "good"}))
 	fail := recordedResult(t, sixCalls(t, []string{"bad", "bad", "bad", "bad", "bad", "bad"}, "report"))
-	res, err := Shrink(context.Background(), pass, fail, ShrinkOptions{Timeout: time.Minute, MaxRuns: 3})
-	if err != nil {
-		t.Fatal(err)
+	for _, max := range []int{4, 5, 7} {
+		res, err := Shrink(context.Background(), pass, fail, ShrinkOptions{Timeout: time.Minute, MaxRuns: max})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Minimal || len(res.Needed) < 2 || res.Runs > max {
+			t.Fatalf("max %d: %+v", max, res)
+		}
 	}
-	if res.Minimal || len(res.Needed) < 2 || res.Runs > 6 {
-		t.Fatalf("%+v", res)
+	if _, err := Shrink(context.Background(), pass, fail, ShrinkOptions{MaxRuns: 3}); err == nil || !strings.Contains(err.Error(), "at least 4") {
+		t.Fatal(err)
 	}
 }
 
@@ -183,5 +193,19 @@ func TestInstancesAsRegressionTests(t *testing.T) {
 	}
 	if _, err := TestInstance(ctx, fail, TestOptions{Expect: "maybe"}); err == nil {
 		t.Fatal("unknown expectation accepted")
+	}
+}
+
+func TestShrinkStopsWhenCancelled(t *testing.T) {
+	pass := recordedResult(t, sixCalls(t, []string{"good", "good", "good", "good", "good", "good"}))
+	fail := recordedResult(t, sixCalls(t, []string{"bad", "good", "bad", "bad", "bad", "bad"}, "report"))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := Shrink(ctx, pass, fail, ShrinkOptions{Timeout: time.Minute}); err == nil {
+		t.Fatal("a cancelled shrink went on")
+	}
+	t.Setenv("CI_TEST_CHILD", "shrinkable")
+	if _, err := TestInstance(ctx, pass, TestOptions{Timeout: time.Minute}); err == nil {
+		t.Fatal("a cancelled test passed")
 	}
 }

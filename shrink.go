@@ -28,7 +28,8 @@ type ShrinkOptions struct {
 	Match *regexp.Regexp
 	// Timeout limits each run of the program; zero means no limit.
 	Timeout time.Duration
-	// MaxRuns limits how many times the program is run; zero means 200.
+	// MaxRuns limits how many times the program is run, at least 4 and by
+	// default 200. Two runs are held back for the result.
 	MaxRuns int
 	// Progress, when set, gets one line per run.
 	Progress io.Writer
@@ -51,7 +52,21 @@ type ShrinkResult struct {
 	// Minimal is false when MaxRuns stopped the search early; the answers in
 	// Needed then still make it fail, but fewer might do.
 	Minimal bool `json:"minimal"`
+	// Pruned is true when the instance holds only the calls the program
+	// made; false when the pruned instance didn't fail again and the
+	// instance keeps every call.
+	Pruned bool `json:"pruned"`
+	// FailingOnly is how many calls only the failing run made. Their answers
+	// can't be swapped, so they stay the failing run's.
+	FailingOnly int `json:"failing_only"`
 }
+
+// ErrInterrupted means a run was interrupted (Ctrl-C), so its result can't
+// be trusted.
+var ErrInterrupted = errors.New("interrupted")
+
+// errOutOfRuns stops the search when MaxRuns is reached.
+var errOutOfRuns = errors.New("out of runs")
 
 // ErrNotAFailure means the run given as the failing one exited 0, and no
 // Match says what its failure looks like.
@@ -81,11 +96,14 @@ func Shrink(ctx context.Context, pass, fail *instance.Instance, opts ShrinkOptio
 	if Ended(fail.Result) == "exit 0" && opts.Match == nil {
 		return nil, ErrNotAFailure
 	}
-	if opts.MaxRuns <= 0 {
+	if opts.MaxRuns == 0 {
 		opts.MaxRuns = 200
 	}
+	if opts.MaxRuns < 4 {
+		return nil, fmt.Errorf("the run limit is %d; it has to be at least 4", opts.MaxRuns)
+	}
 	s := &shrinker{ctx: ctx, pass: pass, fail: fail, opts: opts, cache: map[string]bool{}}
-	pair, _ := pairCalls(pass.Calls, fail.Calls)
+	pair, usedFail := pairCalls(pass.Calls, fail.Calls)
 	for i, j := range pair {
 		if j >= 0 && answerDiffers(pass.Calls[i], fail.Calls[j]) {
 			s.changed = append(s.changed, swap{passIdx: i, failIdx: j})
@@ -96,6 +114,11 @@ func Shrink(ctx context.Context, pass, fail *instance.Instance, opts ShrinkOptio
 	}
 	sort.Slice(s.changed, func(x, y int) bool { return s.changed[x].failIdx < s.changed[y].failIdx })
 	res := &ShrinkResult{Failure: Ended(fail.Result), Changed: len(s.changed), Needed: []string{}}
+	for _, used := range usedFail {
+		if !used {
+			res.FailingOnly++
+		}
+	}
 
 	all := make([]int, len(s.changed))
 	for k := range all {
@@ -105,12 +128,18 @@ func Shrink(ctx context.Context, pass, fail *instance.Instance, opts ShrinkOptio
 		return nil, err
 	} else if !ok {
 		res.Runs = s.runs
+		if s.lastEnded == res.Failure {
+			return res, fmt.Errorf("%w: it ended %s, but didn't print the match", ErrFailureDoesNotReplay, s.lastEnded)
+		}
 		return res, fmt.Errorf("%w: it ended %s, not %s", ErrFailureDoesNotReplay, s.lastEnded, res.Failure)
 	}
 	if ok, err := s.fails(nil); err != nil {
 		return nil, err
 	} else if ok {
 		res.Runs = s.runs
+		if res.FailingOnly > 0 {
+			return res, fmt.Errorf("%w (the answers to the %d calls only the failing run made can't be swapped, and stay in)", ErrNotTheAnswers, res.FailingOnly)
+		}
 		return res, ErrNotTheAnswers
 	}
 
@@ -133,10 +162,18 @@ func Shrink(ctx context.Context, pass, fail *instance.Instance, opts ShrinkOptio
 	inst.Result = rep.Replayed
 	inst.Created = time.Now().UTC()
 	inst.Tool = "codeinstances " + Version
+	if len(s.opts.Argv) > 0 {
+		inst.Command.Argv = s.opts.Argv
+	}
 	pruned := prune(inst, rep.CallsUsed)
-	if rep2, err := s.replay(pruned); err == nil && s.isFailure(rep2) {
+	rep2, err := s.replay(pruned)
+	if err != nil {
+		return nil, err
+	}
+	if s.isFailure(rep2) {
 		pruned.Result = rep2.Replayed
 		inst = pruned
+		res.Pruned = true
 	}
 	res.Instance = inst
 	res.Runs = s.runs
@@ -190,7 +227,14 @@ func (s *shrinker) build(keep []int) *instance.Instance {
 
 func (s *shrinker) replay(inst *instance.Instance) (*Report, error) {
 	s.runs++
-	return Replay(s.ctx, inst, ReplayOptions{Argv: s.opts.Argv, Dir: s.opts.Dir, Timeout: s.opts.Timeout})
+	rep, err := Replay(s.ctx, inst, ReplayOptions{Argv: s.opts.Argv, Dir: s.opts.Dir, Timeout: s.opts.Timeout})
+	if err != nil {
+		return nil, err
+	}
+	if s.ctx.Err() != nil || rep.Replayed.Signal == "interrupt" && s.fail.Result.Signal != "interrupt" {
+		return nil, ErrInterrupted
+	}
+	return rep, nil
 }
 
 func (s *shrinker) isFailure(rep *Report) bool {
@@ -211,6 +255,10 @@ func (s *shrinker) fails(keep []int) (bool, error) {
 	key := subsetKey(keep)
 	if v, ok := s.cache[key]; ok {
 		return v, nil
+	}
+	// Two runs are held back for the result.
+	if s.runs >= s.opts.MaxRuns-2 {
+		return false, errOutOfRuns
 	}
 	rep, err := s.replay(s.build(keep))
 	if err != nil {
@@ -233,17 +281,22 @@ func (s *shrinker) fails(keep []int) (bool, error) {
 // can be removed (when it ran to the end), or the smallest found so far when
 // the run limit stops it.
 func (s *shrinker) ddmin(c []int) ([]int, bool, error) {
+	c, minimal, err := s.ddminRuns(c)
+	if errors.Is(err, errOutOfRuns) {
+		return c, false, nil
+	}
+	return c, minimal, err
+}
+
+func (s *shrinker) ddminRuns(c []int) ([]int, bool, error) {
 	n := 2
 	for len(c) >= 2 {
-		if s.runs >= s.opts.MaxRuns {
-			return c, false, nil
-		}
 		parts := split(c, n)
 		reduced := false
 		for _, p := range parts {
 			ok, err := s.fails(p)
 			if err != nil {
-				return nil, false, err
+				return c, false, err
 			}
 			if ok {
 				c, n, reduced = p, 2, true
@@ -255,7 +308,7 @@ func (s *shrinker) ddmin(c []int) ([]int, bool, error) {
 				comp := without(c, p)
 				ok, err := s.fails(comp)
 				if err != nil {
-					return nil, false, err
+					return c, false, err
 				}
 				if ok {
 					c, n, reduced = comp, max(n-1, 2), true

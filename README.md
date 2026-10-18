@@ -148,9 +148,9 @@ codeinstances shrink -pass passing.instance failing.instance
 ```
 
 ```
-codeinstances: 23 answers differ between the runs; the failure (exit 1) needs 1 of them:
+codeinstances: 23 answers differ between the runs; the failure (exit 1) needs 1 of them (a is the passing run, b the failing one):
   - GET https://api.example.com/item/7 (failing call 11): status: a 200, b 500; response body at $.error: only in b ("out of service")
-codeinstances: kept shrunk.instance (5b0e31c2d4a1: ./myprogram, exit 1, 23 calls, 5 values, 41 ms) after 10 runs
+codeinstances: kept shrunk.instance (5b0e31c2d4a1: ./myprogram, exit 1, 23 calls, 3 values, 41 ms) after 11 runs
 ```
 
 It pairs the calls of the two runs as `diff` does, then replays the program
@@ -161,14 +161,21 @@ run counts as the same failure when it ends the same way (the same exit code
 or signal), and with `-match`, when its output also matches a regular
 expression. The result is written to `shrunk.instance` (`-o` to change it):
 the failing run with only the needed answers left in, and only the calls the
-program made. It fails on replay just like the original.
+program made. It fails on replay with the same exit code or signal as the
+original.
+
+Only answers to calls both runs made can be swapped. Answers to calls only
+the failing run made stay in as they were, and so do response headers and the
+hooked clock and random values; `shrink` says how many such calls there are.
 
 `shrink` refuses with exit 1 when the failing run doesn't fail again on
-replay, or when the program also fails with the passing run's answers, since
-then the answers aren't the cause. A program that fails only some of the
-time can lead it astray. `-max-runs` (200 by default) caps the replays, and
-`-timeout` (a minute by default) each one. To shrink against the build that
-has the bug, give its command after `--`.
+replay, or when the program also fails with the passing run's answers swapped
+in, since then the answers that differ aren't the cause. A program that fails
+only some of the time can lead it astray. `-max-runs` (200 by default, at
+least 4) caps how many times the program runs, two of them held back for the
+result, and `-timeout` (a minute by default) limits each run. Ctrl-C stops
+the search. To shrink against the build that has the bug, give its command
+after `--`; the shrunk file then keeps that command.
 
 ### Instances as regression tests
 
@@ -191,7 +198,9 @@ the bug is fixed and stays fixed. `-expect match` or `-expect pass` sets one
 rule for every file. Give the build under test after `--`. It exits 0 when
 every test passed and 1 when any failed, so it drops into CI as it is.
 
-A shrunk failure makes a good test: it holds only what the bug needs.
+A shrunk failure makes a good test: it holds only what the bug needs. A
+failure found with `-match` that exits 0 is kept with exit 0, so test it with
+`-expect pass`; `shrink` reminds you.
 
 ### Commands
 
@@ -300,7 +309,7 @@ them, 20 of them from parallel goroutines, and takes 5 clock and random values
 through the hook package. Then it stops both servers and replays the instance
 10 times. Every replay has to match. It then replays two changed programs (one
 makes an extra request, one prints the real clock) and checks both are caught,
-and checks `verify` catches an edited file. Last, it compares the instance
+and checks `verify` catches an edited file. Then it compares the instance
 with a second run, recorded while the servers were up, of the program that
 makes one extra request, and checks `diff` finds that request and times every
 call the two runs share. It records a third run while the HTTPS server is
@@ -368,7 +377,8 @@ Ctrl-C reaching the program while the recorder finishes.
 - `diff` doesn't report cost (money, tokens or data sent); it reports
   differences and time.
 - `shrink` needs a passing run to take answers from, and it only swaps whole
-  answers; it doesn't shorten a response body or drop requests.
+  answers to calls both runs made; it doesn't shorten a response body, drop
+  requests, or change headers or hooked values.
 - `shrink` assumes the program fails the same way every time it gets the same
   answers. One that fails at random can mislead it.
 - Replay has no time limit unless you give `-timeout`, so give one when

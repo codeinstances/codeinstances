@@ -71,6 +71,9 @@ func TestInstance(ctx context.Context, inst *instance.Instance, opts TestOptions
 	if err != nil {
 		return nil, err
 	}
+	if ctx.Err() != nil || rep.Replayed.Signal == "interrupt" && inst.Result.Signal != "interrupt" {
+		return nil, ErrInterrupted
+	}
 	r := &TestResult{Expect: expect, Recorded: Ended(inst.Result), Replayed: Ended(rep.Replayed),
 		Problems: []string{}, Notes: []string{}, DurationMS: time.Since(start).Milliseconds()}
 	if expect == ExpectMatch {

@@ -363,7 +363,7 @@ func TestShrinkAndTest(t *testing.T) {
 
 	out := filepath.Join(dir, "shrunk.instance")
 	o, e, code := cli(t, "shrink", "-pass", pass, "-o", out, fail)
-	for _, want := range []string{"3 answers differ between the runs; the failure (exit 1) needs 1 of them:", "GET http://plain.test/2 (failing call 2): response body line 1: a \"good\", b \"bad\"", "codeinstances: kept " + out} {
+	for _, want := range []string{"3 answers differ between the runs; the failure (exit 1) needs 1 of them (a is the passing run, b the failing one):", "GET http://plain.test/2 (failing call 2): response body line 1: a \"good\", b \"bad\"", "codeinstances: kept " + out} {
 		if code != 0 || !strings.Contains(o, want) {
 			t.Fatalf("lacks %q (exit %d):\n%s\n%s", want, code, o, e)
 		}

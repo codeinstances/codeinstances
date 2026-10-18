@@ -60,8 +60,8 @@ Usage:
 Run "codeinstances COMMAND -h" for a command's flags.
 Exit status: record exits as the program did; replay exits 0 when the run
 matched, 1 when it diverged; diff exits 0 when the runs are the same, 1 when
-they differ; shrink exits 0 when it kept a smaller instance, 1 when the
-failure couldn't be narrowed down; test exits 0 when every test passed, 1
+they differ; shrink exits 0 when it kept an instance, 1 when the failure
+couldn't be narrowed down; test exits 0 when every test passed, 1
 when any failed; any command exits 2 on a usage or file error.
 `
 
@@ -509,12 +509,17 @@ func shrink(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "codeinstances shrink: %v\n", err)
 		return 2
 	}
-	ctx, stop := interrupts()
+	// Ctrl-C reaches the program and stops the search: an interrupted run
+	// says nothing about the answers.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	res, err := codeinstances.Shrink(ctx, pass, fail, opts)
 	if err != nil {
 		fmt.Fprintf(stderr, "codeinstances shrink: %v\n", err)
-		return 1
+		if errors.Is(err, codeinstances.ErrNotAFailure) || errors.Is(err, codeinstances.ErrFailureDoesNotReplay) || errors.Is(err, codeinstances.ErrNotTheAnswers) {
+			return 1
+		}
+		return 2
 	}
 	if err := instance.Save(*out, res.Instance); err != nil {
 		fmt.Fprintf(stderr, "codeinstances shrink: %v\n", err)
@@ -530,14 +535,23 @@ func shrink(args []string, stdout, stderr io.Writer) int {
 		}{res, *out, res.Instance.ID})
 		return 0
 	}
-	fmt.Fprintf(stdout, "codeinstances: %d answers differ between the runs; the failure (%s) needs %d of them:\n", res.Changed, res.Failure, len(res.Needed))
+	fmt.Fprintf(stdout, "codeinstances: %d answers differ between the runs; the failure (%s) needs %d of them (a is the passing run, b the failing one):\n", res.Changed, res.Failure, len(res.Needed))
 	for _, n := range res.Needed {
 		fmt.Fprintf(stdout, "  - %s\n", n)
 	}
+	if res.FailingOnly > 0 {
+		fmt.Fprintf(stdout, "codeinstances: the answers to the %d calls only the failing run made stay in as they were\n", res.FailingOnly)
+	}
 	if !res.Minimal {
-		fmt.Fprintf(stdout, "codeinstances: stopped after %d runs (-max-runs); fewer answers might still do\n", res.Runs)
+		fmt.Fprintf(stdout, "codeinstances: stopped at the run limit (-max-runs %d); fewer answers might still do\n", *maxRuns)
+	}
+	if !res.Pruned {
+		fmt.Fprintln(stdout, "codeinstances: the file keeps every call, since the program didn't fail again with only the calls it made")
 	}
 	fmt.Fprintf(stdout, "codeinstances: kept %s (%s) after %d runs\n", *out, res.Instance.Summary(), res.Runs)
+	if res.Failure == "exit 0" {
+		fmt.Fprintln(stdout, "codeinstances: the failure exits 0, so run it as a test with -expect pass")
+	}
 	return 0
 }
 
@@ -561,6 +575,12 @@ func test(args []string, stdout, stderr io.Writer) int {
 		fs.Usage()
 		return 2
 	}
+	switch *expect {
+	case codeinstances.ExpectAuto, codeinstances.ExpectMatch, codeinstances.ExpectPass:
+	default:
+		fmt.Fprintf(stderr, "codeinstances test: -expect %q: want auto, match or pass\n", *expect)
+		return 2
+	}
 	files, err := instanceFiles(fs.Args())
 	if err != nil {
 		fmt.Fprintf(stderr, "codeinstances test: %v\n", err)
@@ -571,7 +591,7 @@ func test(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	opts := codeinstances.TestOptions{Argv: command, Expect: *expect, IgnoreStderr: *noStderr, Timeout: *timeout}
-	ctx, stop := interrupts()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	type entry struct {
 		File string `json:"file"`
@@ -629,16 +649,23 @@ func test(args []string, stdout, stderr io.Writer) int {
 }
 
 // instanceFiles lists the files given, and the .instance files under each
-// directory given, in name order.
+// directory given, in name order, each once.
 func instanceFiles(paths []string) ([]string, error) {
 	var files []string
+	seen := map[string]bool{}
+	add := func(f string) {
+		if !seen[filepath.Clean(f)] {
+			seen[filepath.Clean(f)] = true
+			files = append(files, f)
+		}
+	}
 	for _, p := range paths {
 		fi, err := os.Stat(p)
 		if err != nil {
 			return nil, err
 		}
 		if !fi.IsDir() {
-			files = append(files, p)
+			add(p)
 			continue
 		}
 		err = filepath.WalkDir(p, func(path string, d os.DirEntry, err error) error {
@@ -646,7 +673,7 @@ func instanceFiles(paths []string) ([]string, error) {
 				return err
 			}
 			if !d.IsDir() && strings.HasSuffix(d.Name(), ".instance") {
-				files = append(files, path)
+				add(path)
 			}
 			return nil
 		})
