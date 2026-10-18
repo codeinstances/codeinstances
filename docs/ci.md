@@ -91,6 +91,41 @@ codeinstances replay 3f2a9c1e77b0.instance
 Over a week, `codeinstances group` on the store's folder, or the store's own
 page, shows how many different failures the job really had.
 
+## Signing the runs
+
+To show a run came from your CI and wasn't changed on the way, make a key
+once, on your own machine:
+
+```sh
+codeinstances keygen -o ci -label ci@example.com
+```
+
+Add the contents of `ci.key` as a secret `CODEINSTANCES_SIGNING_KEY`, and
+keep `ci.pub` with whoever checks the runs. Then write the key to a file only
+the job can read, and record with it:
+
+```yaml
+      - name: Test, keeping and signing the run
+        env:
+          SIGNING_KEY: ${{ secrets.CODEINSTANCES_SIGNING_KEY }}
+        run: |
+          sign=""
+          if [ -n "$SIGNING_KEY" ]; then
+            umask 077
+            printf '%s\n' "$SIGNING_KEY" > "$RUNNER_TEMP/ci.key"
+            sign="-sign $RUNNER_TEMP/ci.key -signer ci"
+          fi
+          codeinstances record -q $sign -o run.instance -- go test ./...
+```
+
+The `umask` matters: `codeinstances` won't sign with a key file others can
+read. A pull request from a fork gets no secrets, so its run is kept
+unsigned and still tested.
+
+A store started with `-trust ci.pub` takes only signed runs, and on a laptop
+`codeinstances pull -trust ci.pub ...` or `codeinstances verify -trust ci.pub
+run.instance` checks the key before you trust what the run says.
+
 ## Things to know
 
 - This page is an example. The project's own CI doesn't run it.
@@ -99,6 +134,9 @@ page, shows how many different failures the job really had.
   traffic to real services is. See the README's limits.
 - An instance keeps request and response bodies, URL query strings and the
   command line as they were. Keep the store as private as your CI logs.
+- A signature shows the run was kept by whoever holds the key. Anyone who
+  can change the workflow can use the secret too, so it vouches for your CI
+  as far as you trust the people who can edit it.
 - On a public repository, the job summary is public too: the report shows
   the last lines of the output and the URLs of failed calls, query strings
   included. Leave the report step out there, or keep the summary to the id.

@@ -5,6 +5,7 @@ package store
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/codeinstances/codeinstances"
 	"github.com/codeinstances/codeinstances/instance"
 )
 
@@ -322,5 +324,57 @@ func TestHostsAndRedirects(t *testing.T) {
 	defer odd.Close()
 	if _, err := (&Client{URL: odd.URL}).Push(sample(t, 1, 0, "")); err == nil || !strings.Contains(err.Error(), "another id") {
 		t.Fatal(err)
+	}
+}
+
+func TestTrustedServer(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, _ := codeinstances.GenerateKey()
+	other, _ := codeinstances.GenerateKey()
+	srv := &Server{Store: s, Token: "sesame", Trusted: []codeinstances.TrustedKey{{Key: key.Public().(ed25519.PublicKey), Label: "ci"}}}
+	signed := func(k ed25519.PrivateKey, n int) []byte {
+		inst := &instance.Instance{Tool: "test", Created: time.Date(2026, 10, 18, 6, n, 0, 0, time.UTC),
+			Command: instance.Command{Argv: []string{"prog", fmt.Sprint(n)}}}
+		if k != nil {
+			if err := inst.Sign(k, "ci", time.Now()); err != nil {
+				t.Fatal(err)
+			}
+		}
+		data, err := instance.Marshal(inst)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return data
+	}
+	if w := do(t, srv, "POST", "/v1/instances", "sesame", signed(nil, 1)); w.Code != 403 || !strings.Contains(w.Body.String(), "signed by a key it trusts") {
+		t.Fatalf("unsigned: %d %s", w.Code, w.Body)
+	}
+	if w := do(t, srv, "POST", "/v1/instances", "sesame", signed(other, 2)); w.Code != 403 {
+		t.Fatalf("untrusted key: %d", w.Code)
+	}
+	good := signed(key, 3)
+	if w := do(t, srv, "POST", "/v1/instances", "sesame", good); w.Code != 201 {
+		t.Fatalf("trusted: %d %s", w.Code, w.Body)
+	}
+	// A signature that doesn't check out is refused whether or not the
+	// server trusts anyone.
+	bad := bytes.Replace(good, []byte(`"prog"`), []byte(`"prug"`), 1)
+	inst, _ := instance.Parse(good)
+	newID, _ := instance.ComputeID(bad)
+	bad = bytes.Replace(bad, []byte(inst.ID), []byte(newID), 1)
+	for _, h := range []*Server{srv, {Store: s, Token: "sesame"}} {
+		if w := do(t, h, "POST", "/v1/instances", "sesame", bad); w.Code != 422 || !strings.Contains(w.Body.String(), "signature") {
+			t.Fatalf("bad signature: %d %s", w.Code, w.Body)
+		}
+	}
+	entries := s.List()
+	if len(entries) != 1 || len(entries[0].SignedBy) != 1 || entries[0].SignedBy[0] != instance.KeyID(key.Public().(ed25519.PublicKey)) {
+		t.Fatalf("%+v", entries)
+	}
+	if w := do(t, srv, "GET", "/", "sesame", nil); !strings.Contains(w.Body.String(), entries[0].SignedBy[0]) {
+		t.Fatal("the page doesn't show the signing key")
 	}
 }

@@ -2,8 +2,9 @@
 
 Keep a run of any program as a file, replay it, compare it with another,
 shrink a failure to what causes it, keep it as a test, group repeats of the
-same bug, share it through a store of your own, and fork it at a step to
-run on from there.
+same bug, share it through a store of your own, fork it at a step to run on
+from there, and sign it so others can check who kept it and that nothing
+changed since.
 
 Your code is versioned, reviewed and stored. Its runs are thrown away: a
 test fails in CI, the rerun passes, and the bug is gone. CodeInstances keeps
@@ -19,15 +20,17 @@ one say, and shows where they part ways and which calls got slower.
 it, `codeinstances test` replays a folder of instances as regression tests,
 `codeinstances group` puts failing runs that fail the same way together, and
 `codeinstances serve`, `push`, `pull` and `report` share runs through a
-self-hosted store and as bug reports, and `codeinstances fork` takes a run up
-to a step and runs on from there, live or with an answer you give.
+self-hosted store and as bug reports, `codeinstances fork` takes a run up
+to a step and runs on from there, live or with an answer you give, and
+`codeinstances sign` and `verify -trust` show who kept a run and that it
+wasn't changed afterwards.
 
-**Status: v0.6.0, an early release.** Recording, offline replay, divergence
+**Status: v0.7.0, an early release.** Recording, offline replay, divergence
 reports, comparing two runs, shrinking a failure, instances as regression
 tests, grouping failures, a self-hosted store, bug reports, forking a run,
-the Go hook package, the open format and its integrity check work and are
+signed runs, the Go hook package, the open format and its integrity check work and are
 tested on Linux and macOS, with the release binaries also checked on
-Windows. The limits are listed [below](#limits-in-v060). Open source under the
+Windows. The limits are listed [below](#limits-in-v070). Open source under the
 Apache License 2.0.
 
 ## Download
@@ -352,6 +355,41 @@ step changed. Forking one past the last call (`-at` with the call count plus
 one) answers every recorded call and sends only what the program asks for
 beyond them.
 
+### Signing runs
+
+The id shows a file was changed, not who made it: anyone can edit a run and
+write a new id. A signature shows who kept it.
+
+```sh
+codeinstances keygen -o ci                        # ci.key (secret) and ci.pub
+codeinstances record -sign ci.key -signer ci -- go test ./...
+codeinstances sign -key ci.key run.instance       # or sign a run afterwards
+codeinstances verify -trust ci.pub run.instance   # exit 0 only if ci.key signed it
+```
+
+`keygen` writes an Ed25519 key pair: `ci.key`, a PEM private key readable
+only by you (signing refuses a key file others can read, as ssh does), and
+`ci.pub`, one line to give to whoever checks your runs. A trust file is
+those lines put together. `keygen` never overwrites a key.
+
+A signature vouches for the run's content id, the id the file had before
+it was signed, so several keys can sign one run (a CI runner, then the
+person who reviewed it), and signing again with a key replaces its own
+signature. The file's id covers the signatures too, so signing gives the
+file a new id; `sign` prints both. Every command that reads a file checks
+its signatures, and refuses a file whose signature doesn't check out, as it
+refuses one whose id doesn't. `verify` lists who signed; with `-trust` it
+exits 1 unless a key in the trust file did. `show` and `report` list the
+signatures too.
+
+A store started with `serve -trust keys` takes only runs signed by one of
+those keys, and `pull -trust keys` keeps a run only if one of them signed it.
+`record` and `fork` sign as they keep the run with `-sign key` (and
+`-signer name`). `shrink` doesn't carry signatures over, since the shrunk run
+is a run of its own; sign it if you want it signed. A fork's `parent` is the
+id of the file it was forked from, signatures and all, so a signed fork vouches
+for its lineage too.
+
 ### Commands
 
 | Command | What it does |
@@ -367,15 +405,18 @@ beyond them.
 | `pull [-from url] [-o file] id` | Download an instance by id or unique prefix |
 | `report [-url store] file` | Write a Markdown bug report for an instance |
 | `fork [flags] -at N parent [-- command]` | Run on from a step: the parent's answers before it, live (or given) from it |
+| `keygen [-o name] [-label text]` | Make a key pair for signing: `name.key` and `name.pub` |
+| `sign -key file.key [-signer name] [-o out] file` | Sign an instance (in place unless `-o`) |
 | `show [-json] file` | Describe an instance |
-| `verify file` | Check the file hasn't been changed since it was recorded (exit 1 if it has) |
+| `verify [-trust keys] file...` | Check files haven't been changed since they were recorded or signed, and with `-trust` that a trusted key signed them (exit 1 if not) |
 | `version [-json]` | The version, the format version and the commit it was built from |
 
 `record` flags: `-env NAME` keeps an environment variable and sets it again on
 replay; `-resolve host=addr` sends a host name to another address, like curl's
 `--resolve`; `-upstream-ca file.pem` trusts extra certificates when reaching
 real servers; `-keep-secrets` keeps the headers that are redacted by default;
-`-timeout 30s` kills the program after that long; `-q` hides its output.
+`-timeout 30s` kills the program after that long; `-q` hides its output;
+`-sign file.key` signs the instance as it's kept, as `-signer name`.
 
 `diff` flags, which go before the two files: `-values` compares the hooked
 values themselves; `-ignore-stderr` leaves stderr out; `-json` prints the
@@ -396,16 +437,19 @@ test (a minute by default); `-v` lists the notes of passing tests too;
 `127.0.0.1:7979`), `-token` (default `$CODEINSTANCES_TOKEN`), `-open-read`,
 `-max-size` in bytes (default 64 MiB), `-host name` to answer to another host
 name too, such as the public name of an HTTPS proxy in front of a loopback
-store (repeatable). `push` and `pull` take `-to` or `-from` (default
+store (repeatable), and `-trust keys` to take only runs signed by those
+keys (repeatable). `push` and `pull` take `-to` or `-from` (default
 `$CODEINSTANCES_STORE`) and `-token`; `push -json` prints the results as JSON;
 `pull -o` names the file and `pull -max-size` (default 64 MiB) is the largest
-file it takes. `report -url` (default
+file it takes; `pull -trust keys` keeps the run only if one of those keys
+signed it. `report -url` (default
 `$CODEINSTANCES_STORE`) adds the `pull` command; `-lines` sets how much output
 to show.
 
 `fork` flags: `-at N` (required); `-o` (default `fork.instance`);
 `-answer file.json`; `-offline`; `-fresh-values`; and `-resolve`,
-`-upstream-ca`, `-keep-secrets`, `-timeout` and `-q` as for `record`.
+`-upstream-ca`, `-keep-secrets`, `-timeout`, `-q`, `-sign` and `-signer` as
+for `record`.
 
 `replay` flags: `-strict` requires HTTP requests in exactly the recorded order
 (by default each request gets the next recorded answer for the same method,
@@ -468,7 +512,8 @@ stdout and stderr, duration), the calls (each request and response, or the
 error when none came back) and the values. [docs/FORMAT.md](docs/FORMAT.md)
 describes every member, and [docs/example.instance](docs/example.instance) is
 a real one. Each file carries an id, the SHA-256 of its canonical form, so
-`codeinstances verify` notices any edit.
+`codeinstances verify` notices any edit, and can carry Ed25519 signatures of
+its content id, so it shows who vouched for it.
 
 ## The demo and how it was tested
 
@@ -499,7 +544,11 @@ grouping, and checks `report` says how to pull and replay the run. With the
 servers gone, it forks the first run offline at its order call with a 503
 given as the answer, and checks the program reports the refused order; then
 it forks one past the last call and checks `diff` finds the fork the same as
-its parent.
+its parent. Last, it makes a key, signs the refused-order run and checks
+`verify -trust` takes it and refuses the unsigned run and a key it wasn't
+given; edits the signed run's output, writes a matching id, and checks
+`verify` still catches it on the signature; and starts a store with the key
+as trusted and checks it refuses the unsigned run and takes the signed one.
 Progress goes to stderr and a JSON
 report to stdout; any failed check makes it exit 1.
 
@@ -537,12 +586,14 @@ replay), regression tests (match and pass, a fixed build), fingerprints
 (normalising, Go panics and fatal errors, go test output, Python, Node.js
 and Java traces, escape codes, failed calls, grouping), the store (ids and
 prefixes, edited and oversized uploads, tokens, the page escaping what runs
-print, a lying server caught by pull), bug reports, crashes,
+print, a lying server caught by pull, trusted keys), signatures (edits with
+a fresh id, signatures moved to another run, malformed signatures, two
+signers, key files and trust files), bug reports, crashes,
 killed
 programs and timeouts, a recorder killed with SIGKILL leaving no file, and
 Ctrl-C reaching the program while the recorder finishes.
 
-## Limits in v0.6.0
+## Limits in v0.7.0
 
 - HTTP only. WebSocket, raw TCP and other protocols aren't recorded.
 - Bodies are buffered whole, up to 64 MiB each, so a streamed response reaches
@@ -598,6 +649,20 @@ Ctrl-C reaching the program while the recorder finishes.
   than the step. Clock and random values carry no time in the file, so a
   fork hands back the parent's values in order rather than only those before
   the step.
+- A signature shows that the key's holder signed the content, nothing more.
+  The signer name and time are their claims, not checked facts: there's no
+  timestamp authority, and a clock can be set to anything.
+- Keys are yours to manage. There's no revocation, no expiry and no key
+  directory; a trust file is the list, and a key leaves it when you take its
+  line out. Anyone who gets a private key can sign as its owner.
+- A signature can be taken off a file and a new id written, leaving a
+  valid unsigned file. Only a reader that requires a trusted signature
+  (`verify -trust`, `serve -trust`, `pull -trust`) notices.
+- Signing vouches for what was kept, not that it was kept faithfully: a
+  machine that records can sign a run it changed first. Sign where you
+  trust the recording, as close to it as you can (`record -sign`).
+- Only Ed25519 is made and checked. Signatures in other algorithms are kept
+  and left unchecked.
 - Replay has no time limit unless you give `-timeout`, so give one when
   replaying a run that timed out.
 - The recording proxy listens on a loopback port with no password while the
@@ -607,8 +672,8 @@ Ctrl-C reaching the program while the recorder finishes.
 ## Where it goes next
 
 CodeInstances treats each run as an object you can do things to. This release
-does eight of them: keep, replay, compare, shrink, test, group, share and
-fork. Signed instances, as proof of what ran, are next on the plan.
+does nine of them: keep, replay, compare, shrink, test, group, share, fork
+and sign. Running instances on demand is the last item on the plan.
 
 ## Building and contributing
 

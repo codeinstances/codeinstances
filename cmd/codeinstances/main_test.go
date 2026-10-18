@@ -633,3 +633,133 @@ func TestForkCommand(t *testing.T) {
 		}
 	}
 }
+
+func TestKeygenSignVerify(t *testing.T) {
+	dir := t.TempDir()
+	ci, other := filepath.Join(dir, "ci"), filepath.Join(dir, "other")
+	o, e, code := cli(t, "keygen", "-o", ci, "-label", "ci@example")
+	if code != 0 || !strings.Contains(o, "codeinstances: key ") {
+		t.Fatalf("%d %s %s", code, o, e)
+	}
+	if runtime.GOOS != "windows" {
+		if fi, err := os.Stat(ci + ".key"); err != nil || fi.Mode().Perm() != 0o600 {
+			t.Fatalf("key file mode: %v %v", fi.Mode(), err)
+		}
+	}
+	pub, _ := os.ReadFile(ci + ".pub")
+	if !strings.HasPrefix(string(pub), "codeinstances-ed25519 ") || !strings.HasSuffix(string(pub), " ci@example\n") {
+		t.Fatalf("%q", pub)
+	}
+	before, _ := os.ReadFile(ci + ".key")
+	if _, e, code := cli(t, "keygen", "-o", ci); code != 2 || !strings.Contains(e, "already there") {
+		t.Fatalf("overwrote a key: %d %s", code, e)
+	}
+	if after, _ := os.ReadFile(ci + ".key"); !bytes.Equal(before, after) {
+		t.Fatal("the key changed")
+	}
+	cli(t, "keygen", "-o", other)
+
+	// record -sign signs as it keeps the run.
+	file := filepath.Join(dir, "run.instance")
+	t.Setenv("CI_CMD_CHILD", "hello")
+	t.Setenv("CI_CMD_EXIT", "0")
+	if _, e, code := cli(t, append([]string{"record", "-q", "-sign", ci + ".key", "-signer", "ci", "-o", file, "--"}, childArgs()...)...); code != 0 {
+		t.Fatalf("record -sign: %d %s", code, e)
+	}
+	o, _, code = cli(t, "verify", "-trust", ci+".pub", file)
+	if code != 0 || !strings.Contains(o, ": intact (sha256:") || !strings.Contains(o, `("ci")`) || !strings.Contains(o, "trusted as ci@example") {
+		t.Fatalf("%d %s", code, o)
+	}
+	if o, _, code := cli(t, "verify", "-trust", other+".pub", file); code != 1 || !strings.Contains(o, "no signature by a trusted key") {
+		t.Fatalf("untrusted: %d %s", code, o)
+	}
+	o, _, code = cli(t, "show", file)
+	if code != 0 || !strings.Contains(o, "content   sha256:") || !strings.Contains(o, "signed    by key ") {
+		t.Fatal(o)
+	}
+
+	// sign adds a second signature, in place or to another file.
+	plain := filepath.Join(dir, "plain.instance")
+	if err := instance.Save(plain, &instance.Instance{Tool: "t", Command: instance.Command{Argv: []string{"prog"}}, Result: instance.Result{ExitCode: 1, Stderr: instance.NewBody([]byte("error: boom\n"))}}); err != nil {
+		t.Fatal(err)
+	}
+	if o, _, code := cli(t, "verify", plain); code != 0 || !strings.Contains(o, "not signed") {
+		t.Fatalf("%d %s", code, o)
+	}
+	if _, _, code := cli(t, "verify", "-trust", ci+".pub", plain); code != 1 {
+		t.Fatal("an unsigned file passed -trust")
+	}
+	unsigned, _ := instance.Load(plain)
+	signedFile := filepath.Join(dir, "signed.instance")
+	o, e, code = cli(t, "sign", "-key", other+".key", "-o", signedFile, plain)
+	if code != 0 || !strings.Contains(o, "content "+unsigned.ID) {
+		t.Fatalf("%d %s %s", code, o, e)
+	}
+	if _, _, code := cli(t, "sign", "-key", ci+".key", signedFile); code != 0 {
+		t.Fatal("second signature")
+	}
+	got, _ := instance.Load(signedFile)
+	if len(got.Signatures) != 2 {
+		t.Fatalf("%d signatures", len(got.Signatures))
+	}
+	if o, _, code := cli(t, "verify", "-trust", ci+".pub", plain, signedFile); code != 1 || !strings.Contains(o, signedFile+": intact") {
+		t.Fatalf("mixed files: %d %s", code, o)
+	}
+	o, _, _ = cli(t, "report", signedFile)
+	if !strings.Contains(o, "- **Signed:** by key `") || !strings.Contains(o, "codeinstances verify -trust keys signed.instance") {
+		t.Fatal(o)
+	}
+
+	// An edit with a fresh id still fails, on the signature.
+	data, _ := os.ReadFile(signedFile)
+	edited := bytes.Replace(data, []byte("boom"), []byte("fine"), 1)
+	id, _ := instance.ComputeID(edited)
+	edited = bytes.Replace(edited, []byte(got.ID), []byte(id), 1)
+	tampered := filepath.Join(dir, "tampered.instance")
+	os.WriteFile(tampered, edited, 0o644)
+	if _, e, code := cli(t, "verify", tampered); code != 1 || !strings.Contains(e, "signature") {
+		t.Fatalf("tampered: %d %s", code, e)
+	}
+
+	// pull -trust and serve -trust.
+	st, _ := store.Open(filepath.Join(dir, "store"))
+	ts := httptest.NewServer(&store.Server{Store: st, Token: "sesame"})
+	defer ts.Close()
+	t.Setenv("CODEINSTANCES_STORE", ts.URL)
+	t.Setenv("CODEINSTANCES_TOKEN", "sesame")
+	cli(t, "push", plain, file)
+	if _, e, code := cli(t, "pull", "-trust", ci+".pub", "-o", filepath.Join(dir, "p1.instance"), unsigned.ID); code != 1 || !strings.Contains(e, "wasn't kept") {
+		t.Fatalf("pull -trust of an unsigned run: %d %s", code, e)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "p1.instance")); err == nil {
+		t.Fatal("kept an untrusted pull")
+	}
+	rec, _ := instance.Load(file)
+	if _, e, code := cli(t, "pull", "-trust", ci+".pub", "-o", filepath.Join(dir, "p2.instance"), rec.ID); code != 0 {
+		t.Fatalf("pull -trust: %s", e)
+	}
+
+	os.Chmod(ci+".key", 0o644)
+	for _, args := range [][]string{
+		{"keygen", "extra"},
+		{"sign", plain},
+		{"sign", "-key", filepath.Join(dir, "missing.key"), plain},
+		{"sign", "-key", other + ".key", filepath.Join(dir, "missing.instance")},
+		{"verify"},
+		{"verify", "-trust", filepath.Join(dir, "missing"), plain},
+		{"verify", "-trust", plain, plain},
+		{"serve", "-trust", plain},
+		{"pull", "-trust", filepath.Join(dir, "missing"), rec.ID},
+		{"record", "-sign", filepath.Join(dir, "missing.key"), "--", "true"},
+		{"fork", "-at", "1", "-sign", filepath.Join(dir, "missing.key"), file},
+	} {
+		if _, _, code := cli(t, args...); code != 2 {
+			t.Errorf("%v: exit %d, want 2", args, code)
+		}
+	}
+	if runtime.GOOS != "windows" {
+		if _, e, code := cli(t, "sign", "-key", ci+".key", plain); code != 2 || !strings.Contains(e, "chmod 600") {
+			t.Errorf("a key others can read: %d %s", code, e)
+		}
+	}
+}

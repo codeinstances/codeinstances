@@ -37,7 +37,7 @@ import (
 )
 
 // Version is this release of CodeInstances.
-const Version = "0.6.0"
+const Version = "0.7.0"
 
 // MaxOutput is how much of stdout and of stderr an instance keeps.
 const MaxOutput = 16 << 20

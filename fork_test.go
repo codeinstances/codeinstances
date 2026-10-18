@@ -174,11 +174,15 @@ func TestShrinkOfAForkIsARunOfItsOwn(t *testing.T) {
 	fail := recordedResult(t, sixCalls(t, []string{"good", "good", "bad", "good", "bad", "good"}, "report"))
 	fail.Fork = &instance.Fork{Parent: "sha256:" + strings.Repeat("b", 64), At: 3}
 	fail.Calls[0].FromSeq, fail.Calls[1].FromSeq = 1, 2
+	key, _ := GenerateKey()
+	if err := fail.Sign(key, "ci", time.Now()); err != nil {
+		t.Fatal(err)
+	}
 	res, err := Shrink(context.Background(), pass, fail, ShrinkOptions{Timeout: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Instance.Fork != nil || res.Instance.Calls[0].FromSeq != 0 || res.Instance.Validate() != nil {
+	if res.Instance.Fork != nil || res.Instance.Calls[0].FromSeq != 0 || len(res.Instance.Signatures) != 0 || res.Instance.Validate() != nil {
 		t.Fatalf("%+v", res.Instance.Fork)
 	}
 }

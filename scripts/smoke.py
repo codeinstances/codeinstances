@@ -15,8 +15,8 @@
 # the server stopped, and the run replayed with show and verify working on
 # the file, diff telling it apart from a second run, test replaying it as a
 # regression test, fork answering from the parent offline, group leaving
-# passing runs out and grouping two crashes,
-# and a store served, pushed to and pulled from.
+# passing runs out and grouping two crashes, a store served, pushed to and
+# pulled from, and a run signed and checked against trusted keys.
 import http.server
 import json
 import os
@@ -154,6 +154,16 @@ def smoke(bin_dir, version):
         shown = run([cli, "show", file]).stdout
         require("GET " + url + "/two?x=1 -> 200" in shown, f"show: {shown}")
         require("intact" in run([cli, "verify", file]).stdout, "verify")
+        key = Path(work) / "smoke"
+        run([cli, "keygen", "-o", key, "-label", "smoke"])
+        run([cli, "keygen", "-o", Path(work) / "other"])
+        signed = Path(work) / "signed.instance"
+        run([cli, "sign", "-key", str(key) + ".key", "-signer", "smoke", "-o", signed, second])
+        trusted = run([cli, "verify", "-trust", str(key) + ".pub", signed]).stdout
+        require("trusted as smoke" in trusted, f"verify -trust: {trusted}")
+        require(run([cli, "verify", "-trust", Path(work) / "other.pub", signed], check=False).returncode == 1, "verify -trust took another key")
+        require(run([cli, "verify", "-trust", str(key) + ".pub", second], check=False).returncode == 1, "verify -trust took an unsigned run")
+        print("ok   keygen, sign and verify -trust")
         data = file.read_text(encoding="utf-8")
         file.write_text(data.replace('"exit_code": 0', '"exit_code": 1', 1), encoding="utf-8")
         require(run([cli, "verify", file], check=False).returncode == 1, "verify missed an edited file")

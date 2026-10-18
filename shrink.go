@@ -225,6 +225,9 @@ func (s *shrinker) build(keep []int) *instance.Instance {
 	inst := *s.fail
 	inst.ID = ""
 	inst.Fork = nil
+	// The shrunk run is a run of its own; the failing run's signatures
+	// vouched for other content.
+	inst.Signatures = nil
 	inst.Calls = calls
 	return &inst
 }

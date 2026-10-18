@@ -53,6 +53,9 @@ type Server struct {
 	// Host header. A server on a loopback address sets them to its loopback
 	// names, so a web page can't reach it through DNS rebinding.
 	Hosts []string
+	// Trusted, when set, makes the server take only instances signed by one
+	// of these keys. Instances already in the folder are served as they are.
+	Trusted []codeinstances.TrustedKey
 
 	slotsOnce sync.Once
 	uploads   chan struct{}
@@ -168,9 +171,19 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusBadRequest, "the upload was cut short")
 		return
 	}
+	if len(s.Trusted) > 0 {
+		inst, err := instance.Parse(data)
+		if err == nil {
+			_, err = codeinstances.CheckSignatures(inst, s.Trusted)
+		}
+		if errors.Is(err, codeinstances.ErrNotTrusted) {
+			problem(w, http.StatusForbidden, "the store takes only instances signed by a key it trusts")
+			return
+		}
+	}
 	id, created, err := s.Store.Put(data)
 	if err != nil {
-		if errors.Is(err, instance.ErrModified) {
+		if errors.Is(err, instance.ErrModified) || errors.Is(err, instance.ErrBadSignature) {
 			problem(w, http.StatusUnprocessableEntity, err.Error())
 			return
 		}
@@ -247,9 +260,9 @@ code{font:13px ui-monospace,monospace}.fail{color:#b4471b}.muted{color:#5f6b7a}
 <td><a href="v1/instances/{{index .Runs (last .Runs)}}"><code>{{short (index .Runs (last .Runs))}}</code></a></td></tr>
 {{end}}</table>{{else}}<p>No failing instances.</p>{{end}}
 <h2>Latest instances</h2>
-{{if .Entries}}<table><tr><th>Recorded</th><th>Instance</th><th>Command</th><th>Ended</th><th>Calls</th></tr>
+{{if .Entries}}<table><tr><th>Recorded</th><th>Instance</th><th>Command</th><th>Ended</th><th>Calls</th><th>Signed by</th></tr>
 {{range .Entries}}<tr><td>{{.Created.UTC.Format "2006-01-02 15:04 UTC"}}</td><td><a href="v1/instances/{{.ID}}"><code>{{short .ID}}</code></a></td>
-<td><code>{{join .Command}}</code></td><td{{if .Failed}} class="fail"{{end}}>{{.Ended}}</td><td>{{.Calls}}</td></tr>
+<td><code>{{join .Command}}</code></td><td{{if .Failed}} class="fail"{{end}}>{{.Ended}}</td><td>{{.Calls}}</td><td>{{range .SignedBy}}<code>{{.}}</code> {{end}}</td></tr>
 {{end}}</table>{{else}}<p>The store is empty. Push an instance with <code>codeinstances push</code>.</p>{{end}}
 </body></html>
 `))

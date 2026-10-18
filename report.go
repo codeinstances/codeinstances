@@ -55,6 +55,16 @@ func BugReport(inst *instance.Instance, opts BugReportOptions) string {
 	if failed {
 		fmt.Fprintf(&b, "- **Fingerprint:** %s\n", mdCode(fp.ID))
 	}
+	for _, s := range inst.Signatures {
+		if s.Alg != instance.AlgEd25519 {
+			continue
+		}
+		who := ""
+		if s.Signer != "" {
+			who = " as " + mdCode(SafeText(s.Signer))
+		}
+		fmt.Fprintf(&b, "- **Signed:** by key %s%s at %s (check it against your keys with %s)\n", mdCode(instance.KeyID(s.Key())), who, mdCode(s.SignedAt), mdCode("codeinstances verify -trust keys "+ShellQuote([]string{opts.File})))
+	}
 
 	out := r.Stderr.MustBytes()
 	name := "stderr"

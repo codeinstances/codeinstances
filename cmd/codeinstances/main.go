@@ -15,13 +15,16 @@
 //	codeinstances serve [flags]
 //	codeinstances push [flags] file...
 //	codeinstances pull [flags] id
+//	codeinstances keygen [flags]
+//	codeinstances sign [flags] -key file.key file
 //	codeinstances show [-json] file
-//	codeinstances verify file
+//	codeinstances verify [-trust keys] file...
 //	codeinstances version [-json]
 package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -76,16 +79,23 @@ Usage:
       Upload instances to a store and print their ids and links.
   codeinstances pull [-from url] [-o file] id
       Download an instance from a store by id or unique prefix.
+  codeinstances keygen [-o name] [-label text]
+      Make a key pair for signing instances: name.key, kept secret, and
+      name.pub, to give to whoever checks your runs.
+  codeinstances sign -key file.key [-signer name] [-o out] file
+      Sign an instance: vouch with your key that this is the run as kept.
   codeinstances show [-json] file
       Describe an instance.
-  codeinstances verify file
-      Check that an instance file hasn't been changed since it was recorded.
+  codeinstances verify [-trust keys] file...
+      Check that instance files haven't been changed since they were
+      recorded or signed, and with -trust that a key you trust signed them.
   codeinstances version [-json]
 
 Run "codeinstances COMMAND -h" for a command's flags.
 Exit status: record and fork exit as the program did; replay exits 0 when the run
 matched, 1 when it diverged; diff exits 0 when the runs are the same, 1 when
-they differ; shrink exits 0 when it kept an instance, 1 when the failure
+they differ; verify exits 0 when every file checked out, 1 when one was
+changed, carries a bad signature or, with -trust, no trusted one; shrink exits 0 when it kept an instance, 1 when the failure
 couldn't be narrowed down; test exits 0 when every test passed, 1
 when any failed; group, report, push and pull exit 0 when they worked; any
 command exits 2 on a usage, file or network error. push, pull and report
@@ -125,6 +135,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return push(args[1:], stdout, stderr)
 	case "pull":
 		return pull(args[1:], stdout, stderr)
+	case "keygen":
+		return keygen(args[1:], stdout, stderr)
+	case "sign":
+		return sign(args[1:], stdout, stderr)
 	case "show":
 		return show(args[1:], stdout, stderr)
 	case "verify":
@@ -165,6 +179,7 @@ func record(args []string, stdout, stderr io.Writer) int {
 	keep := fs.Bool("keep-secrets", false, "keep Authorization, Cookie and similar headers instead of redacting them")
 	timeout := fs.Duration("timeout", 0, "kill the program after this long (0: no limit)")
 	quiet := fs.Bool("q", false, "don't pass the program's output through")
+	signKey, signer := signFlags(fs)
 	fs.Usage = func() {
 		fmt.Fprintln(stderr, "usage: codeinstances record [flags] -- command [args...]")
 		fs.PrintDefaults()
@@ -181,6 +196,11 @@ func record(args []string, stdout, stderr io.Writer) int {
 	}
 	if len(command) == 0 {
 		fs.Usage()
+		return 2
+	}
+	key, err := loadSigningKey(*signKey)
+	if err != nil {
+		fmt.Fprintf(stderr, "codeinstances record: -sign: %v\n", err)
 		return 2
 	}
 	opts := codeinstances.RecordOptions{Argv: command, KeepEnv: env, KeepSecrets: *keep, Timeout: *timeout, Resolve: map[string]string{}}
@@ -209,6 +229,12 @@ func record(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		fmt.Fprintf(stderr, "codeinstances record: %v\n", err)
 		return 2
+	}
+	if key != nil {
+		if err := inst.Sign(key, *signer, time.Now()); err != nil {
+			fmt.Fprintf(stderr, "codeinstances record: %v\n", err)
+			return 2
+		}
 	}
 	if err := instance.Save(*out, inst); err != nil {
 		fmt.Fprintf(stderr, "codeinstances record: %v\n", err)
@@ -414,6 +440,13 @@ func show(args []string, stdout, stderr io.Writer) int {
 	if f := inst.Fork; f != nil {
 		fmt.Fprintf(stdout, "forked    from %s at call %d\n", f.Parent, f.At)
 	}
+	if len(inst.Signatures) > 0 {
+		checks, _ := codeinstances.CheckSignatures(inst, nil)
+		fmt.Fprintf(stdout, "content   %s\n", inst.Signatures[0].Content)
+		for _, c := range checks {
+			fmt.Fprintf(stdout, "signed    %s\n", describeSignature(c))
+		}
+	}
 	switch {
 	case r.TimedOut:
 		fmt.Fprintf(stdout, "ended     timed out after %d ms\n", r.DurationMS)
@@ -454,27 +487,208 @@ func show(args []string, stdout, stderr io.Writer) int {
 }
 
 func verify(args []string, stdout, stderr io.Writer) int {
-	if len(args) != 1 {
-		fmt.Fprintln(stderr, "usage: codeinstances verify file")
+	fs := flag.NewFlagSet("verify", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var trustFiles list
+	fs.Var(&trustFiles, "trust", "a file of public keys, as keygen writes them: require a signature by one of them (repeatable)")
+	fs.Usage = func() {
+		fmt.Fprintln(stderr, "usage: codeinstances verify [-trust keys] file...")
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	data, err := os.ReadFile(args[0])
-	if err != nil {
-		fmt.Fprintf(stderr, "codeinstances verify: %v\n", err)
+	if fs.NArg() == 0 {
+		fs.Usage()
 		return 2
 	}
-	if _, err := instance.Parse(data); err != nil {
-		fmt.Fprintf(stderr, "codeinstances verify: %s: %v\n", args[0], err)
-		if errors.Is(err, instance.ErrModified) {
-			return 1
+	var trusted []codeinstances.TrustedKey
+	if len(trustFiles) > 0 {
+		var err error
+		if trusted, err = codeinstances.ReadTrust(trustFiles...); err != nil {
+			fmt.Fprintf(stderr, "codeinstances verify: -trust: %v\n", err)
+			return 2
 		}
+	}
+	code := 0
+	for _, path := range fs.Args() {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			fmt.Fprintf(stderr, "codeinstances verify: %v\n", err)
+			return 2
+		}
+		inst, err := instance.Parse(data)
+		if err != nil {
+			fmt.Fprintf(stderr, "codeinstances verify: %s: %v\n", path, err)
+			if errors.Is(err, instance.ErrModified) || errors.Is(err, instance.ErrBadSignature) {
+				code = max(code, 1)
+				continue
+			}
+			return 2
+		}
+		checks, err := codeinstances.CheckSignatures(inst, trusted)
+		if err != nil {
+			fmt.Fprintf(stdout, "%s: intact (%s), but %v\n", path, inst.ID, err)
+			code = max(code, 1)
+		} else {
+			fmt.Fprintf(stdout, "%s: intact (%s)\n", path, inst.ID)
+		}
+		for _, c := range checks {
+			fmt.Fprintf(stdout, "  signed %s\n", describeSignature(c))
+		}
+		if len(checks) == 0 && len(trusted) == 0 {
+			fmt.Fprintln(stdout, "  not signed: the id shows the file wasn't changed, not who made it")
+		}
+	}
+	return code
+}
+
+// describeSignature is one line about a checked signature.
+func describeSignature(c codeinstances.SignatureCheck) string {
+	s := c.Signature
+	if !c.Checked {
+		return fmt.Sprintf("with %s, an algorithm this version doesn't check", codeinstances.SafeText(s.Alg))
+	}
+	line := "by key " + c.KeyID
+	if s.Signer != "" {
+		line += fmt.Sprintf(" (%q)", codeinstances.SafeText(s.Signer))
+	}
+	line += " at " + s.SignedAt
+	switch {
+	case c.Trusted != nil && c.Trusted.Label != "":
+		line += ", trusted as " + c.Trusted.Label
+	case c.Trusted != nil:
+		line += ", trusted"
+	default:
+		line += ", valid, not among the trusted keys"
+	}
+	return line
+}
+
+// signFlags adds -sign and -signer to a command that writes an instance.
+func signFlags(fs *flag.FlagSet) (key, signer *string) {
+	key = fs.String("sign", "", "sign the instance with this private key file, as keygen writes them")
+	signer = fs.String("signer", "", "a name to sign as, such as ci or agent-runner-3 (a claim; the key is what's checked)")
+	return key, signer
+}
+
+func loadSigningKey(path string) (ed25519.PrivateKey, error) {
+	if path == "" {
+		return nil, nil
+	}
+	return codeinstances.ReadPrivateKey(path)
+}
+
+func keygen(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("keygen", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	name := fs.String("o", "codeinstances", "write name.key and name.pub")
+	label := fs.String("label", "", "a label for the public key, such as ci@example.com (default: the file name)")
+	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	var head struct {
-		ID string `json:"id"`
+	if fs.NArg() != 0 {
+		fmt.Fprintln(stderr, "usage: codeinstances keygen [-o name] [-label text]")
+		return 2
 	}
-	json.Unmarshal(data, &head)
-	fmt.Fprintf(stdout, "%s: intact (%s)\n", args[0], head.ID)
+	key, err := codeinstances.GenerateKey()
+	if err != nil {
+		fmt.Fprintf(stderr, "codeinstances keygen: %v\n", err)
+		return 2
+	}
+	priv, err := codeinstances.EncodePrivateKey(key)
+	if err != nil {
+		fmt.Fprintf(stderr, "codeinstances keygen: %v\n", err)
+		return 2
+	}
+	lbl := *label
+	if lbl == "" {
+		lbl = filepath.Base(*name)
+	}
+	pub := key.Public().(ed25519.PublicKey)
+	keyPath, pubPath := *name+".key", *name+".pub"
+	// Neither file is ever overwritten: a lost key can't be got back.
+	for _, p := range []string{keyPath, pubPath} {
+		if _, err := os.Lstat(p); err == nil {
+			fmt.Fprintf(stderr, "codeinstances keygen: %s is already there; move it or give -o\n", p)
+			return 2
+		}
+	}
+	if err := writeNew(keyPath, priv, 0o600); err != nil {
+		fmt.Fprintf(stderr, "codeinstances keygen: %v\n", err)
+		return 2
+	}
+	if err := writeNew(pubPath, []byte(codeinstances.PublicKeyLine(pub, lbl)), 0o644); err != nil {
+		os.Remove(keyPath)
+		fmt.Fprintf(stderr, "codeinstances keygen: %v\n", err)
+		return 2
+	}
+	fmt.Fprintf(stdout, "codeinstances: key %s\n  %s  private: keep it secret, sign with -sign %s\n  %s  public: put it in the trust file of whoever checks your runs\n",
+		instance.KeyID(pub), keyPath, keyPath, pubPath)
+	return 0
+}
+
+// writeNew creates path, refusing to replace a file that's there.
+func writeNew(path string, data []byte, perm os.FileMode) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		os.Remove(path)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(path)
+		return err
+	}
+	return nil
+}
+
+func sign(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("sign", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	keyPath := fs.String("key", "", "the private key file to sign with (required)")
+	signer := fs.String("signer", "", "a name to sign as, such as ci or agent-runner-3 (a claim; the key is what's checked)")
+	out := fs.String("o", "", "the signed file to write (default: the file itself)")
+	fs.Usage = func() {
+		fmt.Fprintln(stderr, "usage: codeinstances sign -key file.key [-signer name] [-o out] file")
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() != 1 || *keyPath == "" {
+		fs.Usage()
+		return 2
+	}
+	key, err := codeinstances.ReadPrivateKey(*keyPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "codeinstances sign: %v\n", err)
+		return 2
+	}
+	inst, err := instance.Load(fs.Arg(0))
+	if err != nil {
+		fmt.Fprintf(stderr, "codeinstances sign: %v\n", err)
+		return 2
+	}
+	old := inst.ID
+	if err := inst.Sign(key, *signer, time.Now()); err != nil {
+		fmt.Fprintf(stderr, "codeinstances sign: %v\n", err)
+		return 2
+	}
+	path := *out
+	if path == "" {
+		path = fs.Arg(0)
+	}
+	if err := instance.Save(path, inst); err != nil {
+		fmt.Fprintf(stderr, "codeinstances sign: %v\n", err)
+		return 2
+	}
+	s := inst.Signatures[len(inst.Signatures)-1]
+	fmt.Fprintf(stdout, "codeinstances: signed %s with key %s\n  content %s (what the signature vouches for)\n  id      %s (was %s; signatures are part of the file)\n",
+		path, instance.KeyID(s.Key()), s.Content, inst.ID, old)
 	return 0
 }
 
@@ -851,6 +1065,8 @@ func serve(args []string, stdout, stderr io.Writer) int {
 	maxBytes := fs.Int64("max-size", store.DefaultMaxBytes, "the largest instance to take, in bytes")
 	var hosts list
 	fs.Var(&hosts, "host", "also answer to this host name, such as the public name of an HTTPS proxy in front of a loopback store (repeatable)")
+	var trustFiles list
+	fs.Var(&trustFiles, "trust", "take only instances signed by a key in this file, as keygen writes them (repeatable)")
 	fs.Usage = func() {
 		fmt.Fprintln(stderr, "usage: codeinstances serve [flags]")
 		fs.PrintDefaults()
@@ -866,6 +1082,13 @@ func serve(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		fmt.Fprintf(stderr, "codeinstances serve: -addr: %v\n", err)
 		return 2
+	}
+	var trusted []codeinstances.TrustedKey
+	if len(trustFiles) > 0 {
+		if trusted, err = codeinstances.ReadTrust(trustFiles...); err != nil {
+			fmt.Fprintf(stderr, "codeinstances serve: -trust: %v\n", err)
+			return 2
+		}
 	}
 	made := false
 	if *token == "" {
@@ -890,7 +1113,10 @@ func serve(args []string, stdout, stderr io.Writer) int {
 	if made {
 		fmt.Fprintf(stderr, "codeinstances: token %s (set CODEINSTANCES_TOKEN or -token to choose one)\n", *token)
 	}
-	handler := &store.Server{Store: st, Token: *token, OpenRead: *openRead, MaxBytes: *maxBytes}
+	handler := &store.Server{Store: st, Token: *token, OpenRead: *openRead, MaxBytes: *maxBytes, Trusted: trusted}
+	if len(trusted) > 0 {
+		fmt.Fprintf(stderr, "codeinstances: taking only instances signed by %s\n", plural(len(trusted), "trusted key"))
+	}
 	if isLoopback(host) {
 		// Only loopback names, so a web page can't reach the store by
 		// pointing a name of its own at 127.0.0.1.
@@ -996,6 +1222,8 @@ func pull(args []string, stdout, stderr io.Writer) int {
 	client, u, t := storeClient(fs, "from")
 	out := fs.String("o", "", "the file to write (default: the first 12 digits of the id, then .instance)")
 	maxBytes := fs.Int64("max-size", store.DefaultMaxBytes, "the largest instance to take, in bytes")
+	var trustFiles list
+	fs.Var(&trustFiles, "trust", "keep the instance only when a key in this file signed it (repeatable)")
 	fs.Usage = func() {
 		fmt.Fprintln(stderr, "usage: codeinstances pull [flags] id")
 		fs.PrintDefaults()
@@ -1011,10 +1239,24 @@ func pull(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	client.URL, client.Token, client.MaxBytes = *u, *t, *maxBytes
+	var trusted []codeinstances.TrustedKey
+	if len(trustFiles) > 0 {
+		var err error
+		if trusted, err = codeinstances.ReadTrust(trustFiles...); err != nil {
+			fmt.Fprintf(stderr, "codeinstances pull: -trust: %v\n", err)
+			return 2
+		}
+	}
 	data, inst, err := client.Pull(fs.Arg(0))
 	if err != nil {
 		fmt.Fprintf(stderr, "codeinstances pull: %v\n", err)
 		return 2
+	}
+	if len(trusted) > 0 {
+		if _, err := codeinstances.CheckSignatures(inst, trusted); err != nil {
+			fmt.Fprintf(stderr, "codeinstances pull: %s: %v, so it wasn't kept\n", inst.ID, err)
+			return 1
+		}
 	}
 	path := *out
 	if path == "" {
@@ -1042,6 +1284,7 @@ func fork(args []string, stdout, stderr io.Writer) int {
 	keep := fs.Bool("keep-secrets", false, "keep Authorization, Cookie and similar headers instead of redacting them")
 	timeout := fs.Duration("timeout", 0, "kill the program after this long (0: no limit)")
 	quiet := fs.Bool("q", false, "don't pass the program's output through")
+	signKey, signer := signFlags(fs)
 	fs.Usage = func() {
 		fmt.Fprintln(stderr, "usage: codeinstances fork [flags] -at N parent.instance [-- command [args...]]")
 		fs.PrintDefaults()
@@ -1057,6 +1300,11 @@ func fork(args []string, stdout, stderr io.Writer) int {
 	parent, err := instance.Load(fs.Arg(0))
 	if err != nil {
 		fmt.Fprintf(stderr, "codeinstances fork: %v\n", err)
+		return 2
+	}
+	key, err := loadSigningKey(*signKey)
+	if err != nil {
+		fmt.Fprintf(stderr, "codeinstances fork: -sign: %v\n", err)
 		return 2
 	}
 	opts := codeinstances.ForkOptions{At: *at, Offline: *offline, FreshValues: *fresh, Argv: command, KeepSecrets: *keep, Timeout: *timeout, Resolve: map[string]string{}}
@@ -1093,6 +1341,12 @@ func fork(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		fmt.Fprintf(stderr, "codeinstances fork: %v\n", err)
 		return 2
+	}
+	if key != nil {
+		if err := f.Sign(key, *signer, time.Now()); err != nil {
+			fmt.Fprintf(stderr, "codeinstances fork: %v\n", err)
+			return 2
+		}
 	}
 	if err := instance.Save(*out, f); err != nil {
 		fmt.Fprintf(stderr, "codeinstances fork: %v\n", err)

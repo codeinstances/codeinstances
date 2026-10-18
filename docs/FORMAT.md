@@ -27,6 +27,7 @@ refuse a file where a member of this format is spelled in another case
 | `calls` | array | Every exchange with the outside world, in arrival order |
 | `values` | array | Every clock or random value the program asked for |
 | `fork` | object, optional | Set when the instance was forked from another: `parent`, the parent's id, and `at`, the seq of the parent's first call not answered from the parent |
+| `signatures` | array, optional | Signatures that vouch for the run; see [Signatures](#signatures) |
 
 ### command
 
@@ -118,8 +119,56 @@ Whitespace and member order in the file don't change the id; any change to a
 value or an added member does. `codeinstances verify` checks it.
 
 The id shows a file was changed. It doesn't show who made it: anyone can
-change a file and write a new id. Signed instances are on the plan for a later
-version.
+change a file and write a new id. Signatures do that.
+
+## Signatures
+
+A signature says that whoever holds a key vouched for the run as it is. Each
+element of `signatures` is an object:
+
+| Member | Type | |
+|---|---|---|
+| `alg` | string | `"ed25519"`, the only algorithm this version makes and checks |
+| `public_key` | string | The 32-byte Ed25519 public key, base64 (standard alphabet, padded) |
+| `content` | string | The content id that was signed; see below |
+| `signer` | string, optional | A name the signer gave, such as `"ci"`. At most 100 bytes, no control characters |
+| `signed_at` | string | When it was signed, RFC 3339 in UTC to the second, such as `"2026-10-18T09:30:15Z"` |
+| `signature` | string | The 64-byte Ed25519 signature, base64 |
+
+The **content id** is computed like the id, with `signatures` removed as well
+as `id`. It is the id the file had before anyone signed it, so it names the
+run itself, and signatures are added without touching each other: any number
+of keys can sign one run, and a key that signs again replaces its own
+signature. The file's `id` still covers everything, signatures included, so
+signing gives the file a new id while its content id stays the same.
+
+The bytes signed are this text, in UTF-8, with each line ending in a line
+feed:
+
+```
+codeinstances/0 signature
+content <content>
+key <public_key>
+signed_at <signed_at>
+signer <signer>
+```
+
+where `<signer>` is empty when there is no signer. No field may hold a line
+break, so the text reads only one way.
+
+A reader checks every `ed25519` signature: its `content` must be the file's
+content id, and the signature must verify with its `public_key`. A file with
+one that doesn't check out is refused, like a file whose id doesn't match.
+Two signatures by the same key are refused too. A signature with another
+`alg` is left as it is and not checked, so a later version can add one.
+
+What a valid signature shows is that the key's holder signed this content;
+`signer` and `signed_at` are what they said, not checked facts. Whether the
+key is one you trust is a separate question, answered by a list of trusted
+keys (codeinstances reads trust files, one `codeinstances-ed25519 <base64 key>
+<label>` line per key). And since a signature can be taken off a file as
+easily as an id can be recomputed, a missing signature is only noticed by a
+reader that requires one.
 
 ### A test vector
 
@@ -167,6 +216,9 @@ safe for older readers to ignore.
 
 - codeinstances 0.2.0 added `duration_ms` to calls. Files written before it
   don't have the member and stay valid.
+- codeinstances 0.7.0 added `signatures`. Older files don't have them and
+  stay valid, and older versions read signed files, since the id covers the
+  signatures like any other member; they just don't check them.
 - codeinstances 0.6.0 added `fork` to instances and `from_seq` and `given`
   to calls, for forks. Older files don't have them and stay valid. `from_seq`
   and `given` appear only in forks, `from_seq` is below the fork's `at`, and

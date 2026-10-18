@@ -55,6 +55,8 @@ type Instance struct {
 	Values  []Value   `json:"values"`
 	// Fork is set when the instance was forked from another one.
 	Fork *Fork `json:"fork,omitempty"`
+	// Signatures vouch for the content; see Signature. The id covers them.
+	Signatures []Signature `json:"signatures,omitempty"`
 }
 
 // Fork says which instance an instance was forked from, and where.
@@ -348,6 +350,9 @@ func Parse(data []byte) (*Instance, error) {
 	if err := inst.Validate(); err != nil {
 		return nil, err
 	}
+	if err := verifySignatures(&inst, data); err != nil {
+		return nil, err
+	}
 	return &inst, nil
 }
 
@@ -408,6 +413,9 @@ func (inst *Instance) Validate() error {
 		if !parentID.MatchString(f.Parent) || f.At < 1 {
 			return errors.New("fork: needs the parent's sha256 id and a step of 1 or more")
 		}
+	}
+	if err := inst.checkSignatures(); err != nil {
+		return err
 	}
 	for k := range inst.Command.Env {
 		up := strings.ToUpper(k)

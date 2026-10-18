@@ -82,6 +82,11 @@ func (s *Store) add(hex string, inst *instance.Instance, size int64) {
 	e := Entry{ID: inst.ID, Created: inst.Created, Command: inst.Command.Argv, Ended: codeinstances.Ended(inst.Result),
 		DurationMS: inst.Result.DurationMS, Calls: len(inst.Calls), Values: len(inst.Values), Bytes: size,
 		Failed: codeinstances.Failed(inst)}
+	for _, sg := range inst.Signatures {
+		if sg.Alg == instance.AlgEd25519 {
+			e.SignedBy = append(e.SignedBy, instance.KeyID(sg.Key()))
+		}
+	}
 	var fp codeinstances.Fingerprint
 	if e.Failed {
 		fp = codeinstances.FingerprintOf(inst)
@@ -191,6 +196,9 @@ type Entry struct {
 	Bytes       int64     `json:"bytes"`
 	Failed      bool      `json:"failed"`
 	Fingerprint string    `json:"fingerprint,omitempty"`
+	// SignedBy lists the short ids of the keys whose signatures the
+	// instance carries (checked when it was read; trust isn't judged here).
+	SignedBy []string `json:"signed_by,omitempty"`
 }
 
 // List describes every stored instance, newest first.

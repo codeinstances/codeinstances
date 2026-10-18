@@ -33,6 +33,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/codeinstances/codeinstances"
 	"github.com/codeinstances/codeinstances/hook"
 	"github.com/codeinstances/codeinstances/instance"
 	"github.com/codeinstances/codeinstances/internal/buildinfo"
@@ -73,6 +74,8 @@ type report struct {
 	PushMS      int64            `json:"push_ms"`
 	ForkMS      int64            `json:"fork_ms"`
 	PullMS      int64            `json:"pull_ms"`
+	SignMS      int64            `json:"sign_ms"`
+	VerifyMS    int64            `json:"verify_ms"`
 	ServerCalls int              `json:"live_server_requests"`
 }
 
@@ -608,6 +611,64 @@ func demo(cli string, replays int) (*report, error) {
 		return rep, err
 	}
 	add("fork past the last call answers every call from the parent and comes out the same", code == 0 && diffCode == 0, "")
+
+	// Proof: sign the refused run with a fresh key, check it against that
+	// key, catch an edit made with a fresh id, and a store that takes only
+	// signed runs.
+	keyBase := filepath.Join(work, "ci")
+	if _, code, err = runCLI(cli, "keygen", "-o", keyBase, "-label", "demo-ci"); err != nil || code != 0 {
+		return rep, fmt.Errorf("keygen: exit %d %v", code, err)
+	}
+	runCLI(cli, "keygen", "-o", filepath.Join(work, "someone"))
+	signed := filepath.Join(work, "signed.instance")
+	t = time.Now()
+	_, code, err = runCLI(cli, "sign", "-key", keyBase+".key", "-signer", "demo-ci", "-o", signed, refused)
+	rep.SignMS = time.Since(t).Milliseconds()
+	if err != nil {
+		return rep, err
+	}
+	t = time.Now()
+	var vcode int
+	out, vcode, err = runCLI(cli, "verify", "-trust", keyBase+".pub", signed)
+	rep.VerifyMS = time.Since(t).Milliseconds()
+	if err != nil {
+		return rep, err
+	}
+	add("sign vouches for a run and verify -trust accepts the signer's key", code == 0 && vcode == 0 && strings.Contains(out, "trusted as demo-ci"), lastLine(out))
+	_, c1, _ := runCLI(cli, "verify", "-trust", keyBase+".pub", refused)
+	_, c2, _ := runCLI(cli, "verify", "-trust", filepath.Join(work, "someone.pub"), signed)
+	add("verify -trust refuses an unsigned run and one signed by a key it doesn't trust", c1 == 1 && c2 == 1, "")
+	sdata, _ := os.ReadFile(signed)
+	sinst, _ := instance.Parse(sdata)
+	fdata := bytes.Replace(sdata, []byte("the order was refused"), []byte("the order went through"), 1)
+	newID, _ := instance.ComputeID(fdata)
+	fdata = bytes.Replace(fdata, []byte(sinst.ID), []byte(newID), 1)
+	forged := filepath.Join(work, "forged.instance")
+	os.WriteFile(forged, fdata, 0o644)
+	out, code, err = runCLI(cli, "verify", forged)
+	if err != nil {
+		return rep, err
+	}
+	add("an edited run with a fresh id still fails, on its signature", code == 1 && sinst != nil && !bytes.Equal(fdata, sdata) && strings.Contains(out, "signature"), lastLine(out))
+	trusted, err := codeinstances.ReadTrust(keyBase + ".pub")
+	if err != nil {
+		return rep, err
+	}
+	st2, err := store.Open(filepath.Join(work, "signed-store"))
+	if err != nil {
+		return rep, err
+	}
+	ln2, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return rep, err
+	}
+	signedSrv := &http.Server{Handler: &store.Server{Store: st2, Token: "demo-token", Trusted: trusted}, ReadHeaderTimeout: 10 * time.Second, ErrorLog: log.New(io.Discard, "", 0)}
+	go signedSrv.Serve(ln2)
+	defer signedSrv.Close()
+	url2 := "http://" + ln2.Addr().String()
+	_, c1, _ = runCLI(cli, "push", "-to", url2, "-token", "demo-token", refused)
+	_, c2, _ = runCLI(cli, "push", "-to", url2, "-token", "demo-token", signed)
+	add("a store started with trusted keys refuses the unsigned run and takes the signed one", c1 == 2 && c2 == 0 && len(st2.List()) == 1, "")
 	return finish(rep), nil
 }
 
