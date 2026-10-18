@@ -42,7 +42,7 @@ The rest of the environment is not kept, because it often holds secrets.
 | Member | Type | |
 |---|---|---|
 | `exit_code` | integer | The exit code; -1 when the program was killed by a signal (on Windows a program stopped at its time limit has 1) |
-| `signal` | string, optional | The signal that killed it, by Go's name for it: `"killed"` for SIGKILL, `"terminated"` for SIGTERM, `"interrupt"` for SIGINT |
+| `signal` | string, optional | The signal that killed it, by Go's name for it: `"killed"` for SIGKILL, `"terminated"` for SIGTERM, `"interrupt"` for SIGINT. Letters, digits and spaces only, at most 40 |
 | `timed_out` | boolean, optional | The recorder stopped it at its time limit |
 | `duration_ms` | integer | Wall time from start to exit |
 | `stdout`, `stderr` | body, optional | What it printed. Absent when nothing was printed |
@@ -69,7 +69,8 @@ protocol upgrade such as WebSocket, or when the request body was over 64 MiB.
 In that last case the request was never sent, its body isn't kept, and the
 error reads "the request body was bigger than 64 MiB, so it wasn't sent".
 
-`url` is absolute: scheme, lowercase host, the port only when it isn't the
+`method` is an HTTP token (letters, digits and ``!#$%&'*+-.^_`|~``). `url`
+holds no spaces or control characters, and is absolute: scheme, lowercase host, the port only when it isn't the
 scheme's default, path and query, as in `https://api.example.com/v1/items?page=2`.
 Headers are objects from header name to a list of values, as sent or received,
 minus the headers that belong to one connection (`Connection`, `Keep-Alive`,
@@ -163,3 +164,6 @@ safe for older readers to ignore.
 
 - codeinstances 0.2.0 added `duration_ms` to calls. Files written before it
   don't have the member and stay valid.
+- codeinstances 0.5.0 refuses a `method`, `url` or `signal` that breaks the
+  rules above, since tools print them to terminals and into bug reports.
+  Files that codeinstances recorded always kept them.

@@ -24,7 +24,7 @@ func TestBugReport(t *testing.T) {
 		t.Fatal(err)
 	}
 	inst, _ = instance.Parse(data)
-	r := BugReport(inst, BugReportOptions{File: "bug 1.instance", StoreURL: "http://127.0.0.1:7979"})
+	r := BugReport(inst, BugReportOptions{File: "bug 1.instance", StoreURL: "http://user:hunter2@127.0.0.1:7979"})
 	for _, want := range []string{
 		"## exit 1: `error: request <n> timed out after <duration>`\n",
 		"- **Command:** `./sync --all 'two words'`\n",
@@ -42,7 +42,7 @@ func TestBugReport(t *testing.T) {
 			t.Errorf("report lacks %q:\n%s", want, r)
 		}
 	}
-	if strings.Contains(r, "api.test/ok") {
+	if strings.Contains(r, "api.test/ok") || strings.Contains(r, "hunter2") {
 		t.Fatal("a call that worked is listed")
 	}
 	passing := &instance.Instance{ID: "sha256:" + strings.Repeat("ab", 32), Command: instance.Command{Argv: []string{"x"}}}

@@ -112,8 +112,9 @@ func (s *Store) Put(data []byte) (string, bool, error) {
 	}
 	hex := strings.TrimPrefix(inst.ID, "sha256:")
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if _, ok := s.index[hex]; ok {
+	_, known := s.index[hex]
+	s.mu.Unlock()
+	if known {
 		if stored, err := s.read(hex); err == nil {
 			if id, err := instance.ComputeID(stored); err == nil && id == inst.ID && instance.VerifyBytes(stored) == nil {
 				return inst.ID, false, nil
@@ -121,11 +122,14 @@ func (s *Store) Put(data []byte) (string, bool, error) {
 		}
 		// The stored copy was changed or removed behind the store's back.
 	}
-	// Whatever is at the path isn't an intact copy (or it would be in the
-	// index), so it is replaced.
+	// Whatever is at the path isn't an intact copy, so it is replaced. Two
+	// uploads of one id at once write equal files, and the rename is atomic,
+	// so the write needs no lock.
 	if err := instance.WriteAtomic(filepath.Join(s.dir, hex+".instance"), data); err != nil {
 		return "", false, err
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.add(hex, inst, int64(len(data)))
 	return inst.ID, true, nil
 }

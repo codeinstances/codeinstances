@@ -409,7 +409,7 @@ func show(args []string, stdout, stderr io.Writer) int {
 	case r.TimedOut:
 		fmt.Fprintf(stdout, "ended     timed out after %d ms\n", r.DurationMS)
 	case r.Signal != "":
-		fmt.Fprintf(stdout, "ended     killed by %s after %d ms\n", r.Signal, r.DurationMS)
+		fmt.Fprintf(stdout, "ended     killed by %s after %d ms\n", codeinstances.SafeText(r.Signal), r.DurationMS)
 	default:
 		fmt.Fprintf(stdout, "ended     exit %d after %d ms\n", r.ExitCode, r.DurationMS)
 	}
@@ -433,7 +433,7 @@ func show(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "values    %d (clock %d, random %d, bytes %d)\n", len(inst.Values), counts[instance.ValueClock], counts[instance.ValueRandom], counts[instance.ValueBytes])
 	if codeinstances.Failed(inst) {
 		fp := codeinstances.FingerprintOf(inst)
-		fmt.Fprintf(stdout, "failure   %s  %s\n", fp.ID, fp.Summary())
+		fmt.Fprintf(stdout, "failure   %s  %s\n", fp.ID, codeinstances.SafeText(fp.Summary()))
 	}
 	return 0
 }
@@ -834,6 +834,8 @@ func serve(args []string, stdout, stderr io.Writer) int {
 	token := fs.String("token", os.Getenv("CODEINSTANCES_TOKEN"), "the token clients must send (default $CODEINSTANCES_TOKEN; when neither is set, a random one is made and printed)")
 	openRead := fs.Bool("open-read", false, "let anyone read without the token; uploads still need it")
 	maxBytes := fs.Int64("max-size", store.DefaultMaxBytes, "the largest instance to take, in bytes")
+	var hosts list
+	fs.Var(&hosts, "host", "also answer to this host name, such as the public name of an HTTPS proxy in front of a loopback store (repeatable)")
 	fs.Usage = func() {
 		fmt.Fprintln(stderr, "usage: codeinstances serve [flags]")
 		fs.PrintDefaults()
@@ -877,7 +879,7 @@ func serve(args []string, stdout, stderr io.Writer) int {
 	if isLoopback(host) {
 		// Only loopback names, so a web page can't reach the store by
 		// pointing a name of its own at 127.0.0.1.
-		handler.Hosts = []string{"127.0.0.1", "localhost", "::1", host}
+		handler.Hosts = append([]string{"127.0.0.1", "localhost", "::1", host}, hosts...)
 	}
 	srv := &http.Server{
 		Handler:           handler,
@@ -978,6 +980,7 @@ func pull(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	client, u, t := storeClient(fs, "from")
 	out := fs.String("o", "", "the file to write (default: the first 12 digits of the id, then .instance)")
+	maxBytes := fs.Int64("max-size", store.DefaultMaxBytes, "the largest instance to take, in bytes")
 	fs.Usage = func() {
 		fmt.Fprintln(stderr, "usage: codeinstances pull [flags] id")
 		fs.PrintDefaults()
@@ -992,7 +995,7 @@ func pull(args []string, stdout, stderr io.Writer) int {
 		fs.Usage()
 		return 2
 	}
-	client.URL, client.Token = *u, *t
+	client.URL, client.Token, client.MaxBytes = *u, *t, *maxBytes
 	data, inst, err := client.Pull(fs.Arg(0))
 	if err != nil {
 		fmt.Fprintf(stderr, "codeinstances pull: %v\n", err)

@@ -12,10 +12,14 @@ record the test run, and when it fails, push the instance and print a report.
 Run a store somewhere your CI can reach, with a token:
 
 ```sh
-CODEINSTANCES_TOKEN=a-long-random-token codeinstances serve -dir /srv/instances -addr 0.0.0.0:7979
+CODEINSTANCES_TOKEN=a-long-random-token codeinstances serve -dir /srv/instances -host instances.example.com
 ```
 
-Put it behind your usual HTTPS proxy. In the repository's settings, add a
+It listens on `127.0.0.1:7979`; put your usual HTTPS proxy in front of it,
+passing the public host name along. `-host` lets the store answer to that
+name, since a store on a loopback address answers only to loopback names
+otherwise. Don't open the store's own port to the network: it speaks plain
+HTTP, token included. In the repository's settings, add a
 variable `CODEINSTANCES_STORE` (the store's address, such as
 `https://instances.example.com`) and a secret `CODEINSTANCES_TOKEN`. The
 address is a variable, not a secret, so it shows in the job summary's `pull`

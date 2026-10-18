@@ -352,9 +352,12 @@ test (a minute by default); `-v` lists the notes of passing tests too;
 
 `serve` flags: `-dir` (default `instances`), `-addr` (default
 `127.0.0.1:7979`), `-token` (default `$CODEINSTANCES_TOKEN`), `-open-read`,
-`-max-size` in bytes (default 64 MiB). `push` and `pull` take `-to` or
-`-from` (default `$CODEINSTANCES_STORE`) and `-token`; `push -json` prints the
-results as JSON; `pull -o` names the file. `report -url` (default
+`-max-size` in bytes (default 64 MiB), `-host name` to answer to another host
+name too, such as the public name of an HTTPS proxy in front of a loopback
+store (repeatable). `push` and `pull` take `-to` or `-from` (default
+`$CODEINSTANCES_STORE`) and `-token`; `push -json` prints the results as JSON;
+`pull -o` names the file and `pull -max-size` (default 64 MiB) is the largest
+file it takes. `report -url` (default
 `$CODEINSTANCES_STORE`) adds the `pull` command; `-lines` sets how much output
 to show.
 

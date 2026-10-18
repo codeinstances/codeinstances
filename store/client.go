@@ -34,12 +34,15 @@ type Client struct {
 	// URL is the server's address, such as http://127.0.0.1:7979.
 	URL   string
 	Token string
-	// HTTP is the client to use; nil means one with a 2-minute timeout.
+	// HTTP is the client to use; nil means one with a 10-minute timeout.
 	HTTP *http.Client
+	// MaxBytes limits what the client reads from the store; zero means
+	// DefaultMaxBytes. Set it to the store's -max-size to pull bigger files.
+	MaxBytes int64
 }
 
 func (c *Client) http() *http.Client {
-	hc := &http.Client{Timeout: 2 * time.Minute}
+	hc := &http.Client{Timeout: 10 * time.Minute}
 	if c.HTTP != nil {
 		copied := *c.HTTP
 		hc = &copied
@@ -80,12 +83,16 @@ func (c *Client) do(method, path string, body []byte) ([]byte, int, error) {
 		return nil, 0, err
 	}
 	defer resp.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, DefaultMaxBytes+1))
+	max := c.MaxBytes
+	if max <= 0 {
+		max = DefaultMaxBytes
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, max+1))
 	if err != nil {
 		return nil, resp.StatusCode, err
 	}
-	if len(data) > DefaultMaxBytes {
-		return nil, resp.StatusCode, fmt.Errorf("the store's answer is over %d bytes", DefaultMaxBytes)
+	if int64(len(data)) > max {
+		return nil, resp.StatusCode, fmt.Errorf("the store's answer is over %d bytes (pull -max-size raises the limit)", max)
 	}
 	if resp.StatusCode >= 300 {
 		var e struct {

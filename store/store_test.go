@@ -208,6 +208,11 @@ func TestServer(t *testing.T) {
 	if w := do(t, srv, "DELETE", "/v1/instances", "sesame", nil); w.Code != 405 || w.Header().Get("Allow") != "GET, HEAD, POST" {
 		t.Fatal("delete", w.Code)
 	}
+	for _, m := range []string{"T", "OST", "GE"} {
+		if w := do(t, srv, m, "/v1/instances", "sesame", nil); w.Code != 405 {
+			t.Errorf("%s: %d", m, w.Code)
+		}
+	}
 	if w := do(t, srv, "HEAD", "/v1/groups", "sesame", nil); w.Code != 200 {
 		t.Fatal("head", w.Code)
 	}

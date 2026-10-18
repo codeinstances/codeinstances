@@ -209,8 +209,11 @@ func cleanOutput(out []byte) []string {
 	text = strings.ReplaceAll(text, "\r\n", "\n")
 	text = strings.ReplaceAll(text, "\r", "\n")
 	text = strings.Map(func(r rune) rune {
-		if r < 0x20 && r != '\n' && r != '\t' || r == 0x7f {
-			return -1
+		switch {
+		case r < 0x20 && r != '\n' && r != '\t', r >= 0x7f && r <= 0x9f:
+			return -1 // C0 and C1 controls, DEL
+		case r >= 0x202a && r <= 0x202e, r >= 0x2066 && r <= 0x2069:
+			return -1 // bidi overrides, which can reorder what a reader sees
 		}
 		return r
 	}, text)

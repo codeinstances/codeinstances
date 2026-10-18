@@ -16,7 +16,7 @@ var plainArg = regexp.MustCompile(`^[A-Za-z0-9_@%+=:,./-]+$`)
 func ShellQuote(args []string) string {
 	out := make([]string, len(args))
 	for i, a := range args {
-		if plainArg.MatchString(a) {
+		if plainArg.MatchString(a) && !strings.HasPrefix(a, "=") {
 			out[i] = a
 		} else {
 			out[i] = "'" + strings.ReplaceAll(a, "'", `'\''`) + "'"

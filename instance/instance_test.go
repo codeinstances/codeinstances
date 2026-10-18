@@ -371,3 +371,28 @@ func TestCallDuration(t *testing.T) {
 		t.Fatal("a negative duration was accepted")
 	}
 }
+
+func TestValidateRefusesWhatCouldFoolATerminal(t *testing.T) {
+	esc := string(rune(27))
+	cases := map[string]func(*Instance){
+		"method":  func(i *Instance) { i.Calls[0].Request.Method = "GET" + esc + "[2J" },
+		"url":     func(i *Instance) { i.Calls[0].Request.URL = "https://a.test/x" + esc + "]0;t\a" },
+		"c1 url":  func(i *Instance) { i.Calls[0].Request.URL = "https://a.test/\u009b2J" },
+		"space":   func(i *Instance) { i.Calls[0].Request.URL = "https://a.test/a b" },
+		"signal":  func(i *Instance) { i.Result.Signal = "killed\n# heading" },
+		"signal2": func(i *Instance) { i.Result.Signal = "@everyone" },
+	}
+	for name, change := range cases {
+		inst := sample()
+		change(inst)
+		if inst.Validate() == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	ok := sample()
+	ok.Result.Signal = "segmentation fault"
+	ok.Calls[0].Request.Method = "PROPFIND"
+	if err := ok.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}

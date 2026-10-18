@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 
@@ -90,7 +91,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusNotFound, "no such page")
 		return
 	}
-	if !strings.Contains(allow, method) {
+	if !slices.Contains(strings.Split(allow, ", "), method) {
 		w.Header().Set("Allow", allow)
 		problem(w, http.StatusMethodNotAllowed, "use "+allow)
 		return

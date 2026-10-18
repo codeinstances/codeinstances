@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -366,10 +367,28 @@ func (b *Body) check() error {
 	return err
 }
 
+var (
+	httpToken  = regexp.MustCompile("^[!#$%&'*+\\-.^_`|~0-9A-Za-z]+$")
+	signalName = regexp.MustCompile(`^[A-Za-z0-9 ]{1,40}$`)
+)
+
+// hasControl says whether s holds a C0 or C1 control character or DEL.
+func hasControl(s string) bool {
+	for _, r := range s {
+		if r < 0x20 || r >= 0x7f && r <= 0x9f {
+			return true
+		}
+	}
+	return false
+}
+
 // Validate checks the instance's own consistency.
 func (inst *Instance) Validate() error {
 	if len(inst.Command.Argv) == 0 || inst.Command.Argv[0] == "" {
 		return errors.New("instance has no command")
+	}
+	if inst.Result.Signal != "" && !signalName.MatchString(inst.Result.Signal) {
+		return errors.New("result: the signal isn't a signal name")
 	}
 	for _, b := range []*Body{inst.Result.Stdout, inst.Result.Stderr} {
 		if err := b.check(); err != nil {
@@ -390,6 +409,12 @@ func (inst *Instance) Validate() error {
 		}
 		if c.Request.Method == "" || c.Request.URL == "" {
 			return fmt.Errorf("call %d: request has no method or URL", c.Seq)
+		}
+		if !httpToken.MatchString(c.Request.Method) {
+			return fmt.Errorf("call %d: the method isn't an HTTP token", c.Seq)
+		}
+		if hasControl(c.Request.URL) || strings.ContainsAny(c.Request.URL, " \t") {
+			return fmt.Errorf("call %d: the URL holds spaces or control characters", c.Seq)
 		}
 		if err := c.Request.Body.check(); err != nil {
 			return fmt.Errorf("call %d request: %w", c.Seq, err)

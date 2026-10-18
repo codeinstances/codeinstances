@@ -5,6 +5,7 @@ package codeinstances
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -39,6 +40,8 @@ func BugReport(inst *instance.Instance, opts BugReportOptions) string {
 	title := "The run passed"
 	if failed {
 		fp = FingerprintOf(inst)
+		// Ended is safe as it is: Validate allows only letters, digits and
+		// spaces in a signal name.
 		title = Ended(r)
 		if fp.Error != "" {
 			title += ": " + mdCode(clip(strings.SplitN(fp.Error, "\n", 2)[0]))
@@ -91,7 +94,7 @@ func BugReport(inst *instance.Instance, opts BugReportOptions) string {
 	file := ShellQuote([]string{opts.File})
 	var cmds []string
 	if opts.StoreURL != "" {
-		cmds = append(cmds, fmt.Sprintf("codeinstances pull -from %s -o %s %s", ShellQuote([]string{opts.StoreURL}), file, inst.ID))
+		cmds = append(cmds, fmt.Sprintf("codeinstances pull -from %s -o %s %s", ShellQuote([]string{withoutUserinfo(opts.StoreURL)}), file, inst.ID))
 	}
 	cmds = append(cmds,
 		"codeinstances verify "+file,
@@ -123,4 +126,15 @@ func mdCode(s string) string {
 		s = " " + s + " "
 	}
 	return ticks + s + ticks
+}
+
+// withoutUserinfo drops a user name and password from a URL, so a report
+// never carries them.
+func withoutUserinfo(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.User == nil {
+		return raw
+	}
+	u.User = nil
+	return u.String()
 }

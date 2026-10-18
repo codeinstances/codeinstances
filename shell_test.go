@@ -39,3 +39,12 @@ func TestSafeText(t *testing.T) {
 		t.Fatalf("%q", got)
 	}
 }
+
+func TestOddCharactersAreDropped(t *testing.T) {
+	if got := SafeText("a\u009b2Jb ‮evil‬ c"); got != "a2Jb evil c" {
+		t.Fatalf("%q", got)
+	}
+	if ShellQuote([]string{"=ls", "a=b"}) != "'=ls' a=b" {
+		t.Fatal(ShellQuote([]string{"=ls", "a=b"}))
+	}
+}
