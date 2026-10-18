@@ -26,16 +26,16 @@ func TestBugReport(t *testing.T) {
 	inst, _ = instance.Parse(data)
 	r := BugReport(inst, BugReportOptions{File: "bug 1.instance", StoreURL: "http://127.0.0.1:7979"})
 	for _, want := range []string{
-		"## exit 1: error: request \\<n\\> timed out after \\<duration\\>\n",
-		"- **Command:** `./sync --all \"two words\"`\n",
+		"## exit 1: `error: request <n> timed out after <duration>`\n",
+		"- **Command:** `./sync --all 'two words'`\n",
 		"- **Ended:** exit 1 after 0 ms\n",
 		"- **Instance:** `" + inst.ID + "` (3 calls, 0 values)\n",
 		"- **Fingerprint:** `fp1:",
 		"### Output (the last 3 lines of stderr)\n\n````text\nloading\nnote: ```fenced``` text\n",
-		"- `GET https://api.test/items?page=2` → no answer: connection refused\n",
+		"- `GET https://api.test/items?page=2` → no answer: `connection refused`\n",
 		"- `POST https://api.test/orders` → 503\n",
-		"codeinstances pull -from http://127.0.0.1:7979 -o \"bug 1.instance\" " + inst.ID + "\n",
-		"codeinstances replay \"bug 1.instance\"",
+		"codeinstances pull -from http://127.0.0.1:7979 -o 'bug 1.instance' " + inst.ID + "\n",
+		"codeinstances replay 'bug 1.instance'",
 		"only secret header values were redacted",
 	} {
 		if !strings.Contains(r, want) {
@@ -50,7 +50,13 @@ func TestBugReport(t *testing.T) {
 	if !strings.HasPrefix(p, "## The run passed\n") || strings.Contains(p, "Fingerprint") || strings.Contains(p, "pull") || !strings.Contains(p, "abababababab.instance") {
 		t.Fatal(p)
 	}
-	if mdText("a_b*c<d>") != `a\_b\*c\<d\>` || mdCode("x`y") != "``x`y``" {
-		t.Fatal(mdText("a_b*c<d>"), mdCode("x`y"))
+	if mdCode("x`y") != "``x`y``" || mdCode("@team <b>") != "`@team <b>`" {
+		t.Fatal(mdCode("x`y"))
+	}
+	// A crafted command and file name are quoted so pasting them runs nothing.
+	inst.Command.Argv = []string{"prog", "$(touch /tmp/x)"}
+	r = BugReport(inst, BugReportOptions{File: "a$(id).instance"})
+	if !strings.Contains(r, "`prog '$(touch /tmp/x)'`") || !strings.Contains(r, "codeinstances verify 'a$(id).instance'") {
+		t.Fatal(r)
 	}
 }

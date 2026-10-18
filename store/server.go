@@ -10,23 +10,33 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"io/fs"
+	"mime"
+	"net"
 	"net/http"
+	"os"
 	"strings"
+	"sync"
 
 	"github.com/codeinstances/codeinstances"
 	"github.com/codeinstances/codeinstances/instance"
 )
 
 // DefaultMaxBytes is the largest instance a server takes by default.
-const DefaultMaxBytes = 256 << 20
+const DefaultMaxBytes = 64 << 20
+
+// DefaultMaxUploads is how many uploads a server reads at once by default.
+const DefaultMaxUploads = 2
 
 // Server serves a store over HTTP:
 //
 //	GET  /                      a page listing the groups and the latest instances
-//	POST /v1/instances          store the instance in the request body
+//	POST /v1/instances          store the instance in the request body (Content-Type: application/json)
 //	GET  /v1/instances          list the stored instances as JSON (?failed=true for failing ones)
 //	GET  /v1/instances/{id}     download an instance by id or unique prefix
 //	GET  /v1/groups             the failing instances grouped by fingerprint, as JSON
+//
+// HEAD works wherever GET does.
 type Server struct {
 	Store *Store
 	// Token, when set, must be sent as "Authorization: Bearer <token>".
@@ -35,47 +45,114 @@ type Server struct {
 	OpenRead bool
 	// MaxBytes limits an upload; zero means DefaultMaxBytes.
 	MaxBytes int64
+	// MaxUploads limits uploads read at once; zero means DefaultMaxUploads.
+	// More get 503.
+	MaxUploads int
+	// Hosts, when set, are the only host names a request may name in its
+	// Host header. A server on a loopback address sets them to its loopback
+	// names, so a web page can't reach it through DNS rebinding.
+	Hosts []string
+
+	slotsOnce sync.Once
+	uploads   chan struct{}
+}
+
+func (s *Server) slots() chan struct{} {
+	s.slotsOnce.Do(func() {
+		n := s.MaxUploads
+		if n <= 0 {
+			n = DefaultMaxUploads
+		}
+		s.uploads = make(chan struct{}, n)
+	})
+	return s.uploads
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "no-store")
+	if !s.hostAllowed(r.Host) {
+		problem(w, http.StatusMisdirectedRequest, "this store doesn't answer to that host name")
+		return
+	}
 	path := strings.TrimSuffix(r.URL.Path, "/")
-	write := r.Method == http.MethodPost
-	if !s.allowed(r, write) {
+	method := r.Method
+	if method == http.MethodHead {
+		method = http.MethodGet
+	}
+	var allow string
+	switch {
+	case path == "" || path == "/v1/groups" || strings.HasPrefix(path, "/v1/instances/"):
+		allow = "GET, HEAD"
+	case path == "/v1/instances":
+		allow = "GET, HEAD, POST"
+	default:
+		problem(w, http.StatusNotFound, "no such page")
+		return
+	}
+	if !strings.Contains(allow, method) {
+		w.Header().Set("Allow", allow)
+		problem(w, http.StatusMethodNotAllowed, "use "+allow)
+		return
+	}
+	if !s.allowed(r, method == http.MethodPost) {
 		w.Header().Set("WWW-Authenticate", `Bearer realm="codeinstances"`)
 		problem(w, http.StatusUnauthorized, "a token is needed: send Authorization: Bearer <token>")
 		return
 	}
 	switch {
-	case path == "" && r.Method == http.MethodGet:
-		s.index(w, r)
-	case path == "/v1/instances" && r.Method == http.MethodPost:
+	case path == "":
+		s.index(w)
+	case path == "/v1/instances" && method == http.MethodPost:
 		s.upload(w, r)
-	case path == "/v1/instances" && r.Method == http.MethodGet:
+	case path == "/v1/instances":
 		s.list(w, r)
-	case strings.HasPrefix(path, "/v1/instances/") && r.Method == http.MethodGet:
-		s.download(w, r, strings.TrimPrefix(path, "/v1/instances/"))
-	case path == "/v1/groups" && r.Method == http.MethodGet:
-		g, err := s.Store.Groups()
-		if err != nil {
-			problem(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		writeJSON(w, http.StatusOK, g)
+	case path == "/v1/groups":
+		writeJSON(w, http.StatusOK, s.Store.Groups())
 	default:
-		problem(w, http.StatusNotFound, "no such page")
+		s.download(w, strings.TrimPrefix(path, "/v1/instances/"))
 	}
+}
+
+func (s *Server) hostAllowed(host string) bool {
+	if len(s.Hosts) == 0 {
+		return true
+	}
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	host = strings.Trim(strings.ToLower(host), "[]")
+	for _, h := range s.Hosts {
+		if host == strings.Trim(strings.ToLower(h), "[]") {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) allowed(r *http.Request, write bool) bool {
 	if s.Token == "" || !write && s.OpenRead {
 		return true
 	}
-	got, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-	return ok && subtle.ConstantTimeCompare([]byte(got), []byte(s.Token)) == 1
+	scheme, got, ok := strings.Cut(r.Header.Get("Authorization"), " ")
+	return ok && strings.EqualFold(scheme, "Bearer") && subtle.ConstantTimeCompare([]byte(strings.TrimSpace(got)), []byte(s.Token)) == 1
 }
 
 func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
+	// A browser can't send this content type to another site without asking
+	// first, so a web page can't plant instances in the store.
+	if mt, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); mt != "application/json" {
+		problem(w, http.StatusUnsupportedMediaType, "send the instance with Content-Type: application/json")
+		return
+	}
+	select {
+	case s.slots() <- struct{}{}:
+		defer func() { <-s.slots() }()
+	default:
+		w.Header().Set("Retry-After", "5")
+		problem(w, http.StatusServiceUnavailable, "the store is busy with other uploads; try again")
+		return
+	}
 	max := s.MaxBytes
 	if max <= 0 {
 		max = DefaultMaxBytes
@@ -87,13 +164,19 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 			problem(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("the instance is over %d bytes", max))
 			return
 		}
-		problem(w, http.StatusBadRequest, err.Error())
+		problem(w, http.StatusBadRequest, "the upload was cut short")
 		return
 	}
 	id, created, err := s.Store.Put(data)
 	if err != nil {
 		if errors.Is(err, instance.ErrModified) {
 			problem(w, http.StatusUnprocessableEntity, err.Error())
+			return
+		}
+		var fsErr *fs.PathError
+		var linkErr *os.LinkError
+		if errors.As(err, &fsErr) || errors.As(err, &linkErr) {
+			problem(w, http.StatusInternalServerError, "the store couldn't keep the file")
 			return
 		}
 		problem(w, http.StatusBadRequest, err.Error())
@@ -103,15 +186,11 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 	if created {
 		status = http.StatusCreated
 	}
-	writeJSON(w, status, Pushed{ID: id, URL: baseURL(r) + "/v1/instances/" + id, Created: created})
+	writeJSON(w, status, Pushed{ID: id, Path: "/v1/instances/" + id, Created: created})
 }
 
 func (s *Server) list(w http.ResponseWriter, r *http.Request) {
-	entries, err := s.Store.List()
-	if err != nil {
-		problem(w, http.StatusInternalServerError, err.Error())
-		return
-	}
+	entries := s.Store.List()
 	if r.URL.Query().Get("failed") == "true" {
 		kept := entries[:0]
 		for _, e := range entries {
@@ -124,7 +203,7 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"instances": entries})
 }
 
-func (s *Server) download(w http.ResponseWriter, r *http.Request, ref string) {
+func (s *Server) download(w http.ResponseWriter, ref string) {
 	data, id, err := s.Store.Get(ref)
 	switch {
 	case errors.Is(err, ErrBadRef):
@@ -137,7 +216,7 @@ func (s *Server) download(w http.ResponseWriter, r *http.Request, ref string) {
 		problem(w, http.StatusConflict, err.Error())
 		return
 	case err != nil:
-		problem(w, http.StatusInternalServerError, err.Error())
+		problem(w, http.StatusInternalServerError, "the stored file was changed or removed")
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -174,17 +253,9 @@ code{font:13px ui-monospace,monospace}.fail{color:#b4471b}.muted{color:#5f6b7a}
 </body></html>
 `))
 
-func (s *Server) index(w http.ResponseWriter, r *http.Request) {
-	entries, err := s.Store.List()
-	if err != nil {
-		problem(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	g, err := s.Store.Groups()
-	if err != nil {
-		problem(w, http.StatusInternalServerError, err.Error())
-		return
-	}
+func (s *Server) index(w http.ResponseWriter) {
+	entries := s.Store.List()
+	g := s.Store.Groups()
 	shown := entries
 	if len(shown) > 100 {
 		shown = shown[:100]
@@ -192,14 +263,6 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'")
 	page.Execute(w, map[string]any{"Count": len(entries), "Failing": g.Failing, "Groups": g.Groups, "Entries": shown, "Version": codeinstances.Version})
-}
-
-func baseURL(r *http.Request) string {
-	scheme := "http"
-	if r.TLS != nil {
-		scheme = "https"
-	}
-	return scheme + "://" + r.Host
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

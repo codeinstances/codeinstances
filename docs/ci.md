@@ -15,10 +15,11 @@ Run a store somewhere your CI can reach, with a token:
 CODEINSTANCES_TOKEN=a-long-random-token codeinstances serve -dir /srv/instances -addr 0.0.0.0:7979
 ```
 
-Put it behind your usual HTTPS proxy. `serve` refuses to listen beyond the
-machine without a token. In the repository's settings, add two secrets:
-`CODEINSTANCES_STORE` (the store's address, such as
-`https://instances.example.com`) and `CODEINSTANCES_TOKEN`.
+Put it behind your usual HTTPS proxy. In the repository's settings, add a
+variable `CODEINSTANCES_STORE` (the store's address, such as
+`https://instances.example.com`) and a secret `CODEINSTANCES_TOKEN`. The
+address is a variable, not a secret, so it shows in the job summary's `pull`
+command instead of being masked.
 
 ## The workflow
 
@@ -39,7 +40,7 @@ jobs:
         run: |
           mkdir -p "$HOME/bin"
           curl -fsSL https://github.com/codeinstances/codeinstances/releases/latest/download/codeinstances_linux_amd64.tar.gz \
-            | tar -xz -C "$HOME/bin" codeinstances
+            | tar -xz -C "$HOME/bin"
           echo "$HOME/bin" >> "$GITHUB_PATH"
 
       # Fetch modules first, so the recording holds the tests' own traffic.
@@ -48,14 +49,20 @@ jobs:
       - name: Test, keeping the run
         run: codeinstances record -q -o run.instance -- go test ./...
 
-      - name: Push the failing run and report it
+      # The report comes first, so it's written even when the store can't
+      # be reached (or, on a pull request from a fork, there's no token).
+      - name: Report the failing run
         if: failure()
         env:
-          CODEINSTANCES_STORE: ${{ secrets.CODEINSTANCES_STORE }}
+          CODEINSTANCES_STORE: ${{ vars.CODEINSTANCES_STORE }}
+        run: codeinstances report run.instance >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Push the failing run
+        if: failure()
+        env:
+          CODEINSTANCES_STORE: ${{ vars.CODEINSTANCES_STORE }}
           CODEINSTANCES_TOKEN: ${{ secrets.CODEINSTANCES_TOKEN }}
-        run: |
-          codeinstances push run.instance
-          codeinstances report run.instance >> "$GITHUB_STEP_SUMMARY"
+        run: codeinstances push run.instance
 
       # Without a store, keep the file with the run instead.
       - uses: actions/upload-artifact@v4
@@ -88,3 +95,6 @@ page, shows how many different failures the job really had.
   traffic to real services is. See the README's limits.
 - An instance keeps request and response bodies, URL query strings and the
   command line as they were. Keep the store as private as your CI logs.
+- On a public repository, the job summary is public too: the report shows
+  the last lines of the output and the URLs of failed calls, query strings
+  included. Leave the report step out there, or keep the summary to the id.

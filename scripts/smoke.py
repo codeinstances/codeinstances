@@ -139,7 +139,7 @@ def smoke(bin_dir, version):
             run([cli, "pull", "-from", store, "-token", "smoke", "-o", pulled, pid.split(":")[1][:12]])
             require(pulled.read_bytes() == (Path(work) / "crash1.instance").read_bytes(), "pull gave a different file")
             report = run([cli, "report", "-url", store, pulled]).stdout
-            require(report.startswith("## exit 1: KeyError") and "codeinstances pull -from " + store in report, f"report: {report}")
+            require(report.startswith("## exit 1: `KeyError") and "codeinstances pull -from " + store in report, f"report: {report}")
         finally:
             server.terminate()
             server.wait(timeout=30)

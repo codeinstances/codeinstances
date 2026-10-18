@@ -6,6 +6,7 @@ package store
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,14 +14,17 @@ import (
 	"strings"
 	"time"
 
+	"github.com/codeinstances/codeinstances"
 	"github.com/codeinstances/codeinstances/instance"
 )
 
 // Pushed is a server's answer to an upload.
 type Pushed struct {
 	ID string `json:"id"`
-	// URL is where the instance can be downloaded.
-	URL string `json:"url"`
+	// Path is where the instance can be downloaded, on the server.
+	Path string `json:"path"`
+	// URL is Path on the store's address, filled in by the client.
+	URL string `json:"url,omitempty"`
 	// Created is false when the store had the instance already.
 	Created bool `json:"created"`
 }
@@ -35,16 +39,23 @@ type Client struct {
 }
 
 func (c *Client) http() *http.Client {
+	hc := &http.Client{Timeout: 2 * time.Minute}
 	if c.HTTP != nil {
-		return c.HTTP
+		copied := *c.HTTP
+		hc = &copied
 	}
-	return &http.Client{Timeout: 2 * time.Minute}
+	// A redirect could carry the token somewhere else, or from https to
+	// http, so none are followed.
+	hc.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return errors.New("the store answered with a redirect; give its final address")
+	}
+	return hc
 }
 
 func (c *Client) endpoint(path string) (string, error) {
 	u, err := url.Parse(strings.TrimSuffix(c.URL, "/"))
 	if err != nil || u.Scheme != "http" && u.Scheme != "https" || u.Host == "" {
-		return "", fmt.Errorf("the store address %q isn't an http or https URL", c.URL)
+		return "", errors.New("the store address isn't an http or https URL")
 	}
 	return u.String() + path, nil
 }
@@ -69,25 +80,29 @@ func (c *Client) do(method, path string, body []byte) ([]byte, int, error) {
 		return nil, 0, err
 	}
 	defer resp.Body.Close()
-	data, err := io.ReadAll(resp.Body)
+	data, err := io.ReadAll(io.LimitReader(resp.Body, DefaultMaxBytes+1))
 	if err != nil {
 		return nil, resp.StatusCode, err
+	}
+	if len(data) > DefaultMaxBytes {
+		return nil, resp.StatusCode, fmt.Errorf("the store's answer is over %d bytes", DefaultMaxBytes)
 	}
 	if resp.StatusCode >= 300 {
 		var e struct {
 			Error string `json:"error"`
 		}
 		if json.Unmarshal(data, &e) == nil && e.Error != "" {
-			return nil, resp.StatusCode, fmt.Errorf("the store said %d: %s", resp.StatusCode, e.Error)
+			return nil, resp.StatusCode, fmt.Errorf("the store said %d: %s", resp.StatusCode, codeinstances.SafeText(e.Error))
 		}
-		return nil, resp.StatusCode, fmt.Errorf("the store said %s", resp.Status)
+		return nil, resp.StatusCode, fmt.Errorf("the store said %d", resp.StatusCode)
 	}
 	return data, resp.StatusCode, nil
 }
 
 // Push uploads an instance file's bytes.
 func (c *Client) Push(data []byte) (*Pushed, error) {
-	if _, err := instance.Parse(data); err != nil {
+	inst, err := instance.Parse(data)
+	if err != nil {
 		return nil, err
 	}
 	out, _, err := c.do(http.MethodPost, "/v1/instances", data)
@@ -98,6 +113,11 @@ func (c *Client) Push(data []byte) (*Pushed, error) {
 	if err := json.Unmarshal(out, &p); err != nil {
 		return nil, fmt.Errorf("the store's answer: %w", err)
 	}
+	if p.ID != inst.ID {
+		return nil, errors.New("the store answered with another id")
+	}
+	p.Path = "/v1/instances/" + inst.ID
+	p.URL, _ = c.endpoint(p.Path)
 	return &p, nil
 }
 

@@ -21,6 +21,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -401,8 +403,8 @@ func show(args []string, stdout, stderr io.Writer) int {
 	}
 	r := inst.Result
 	fmt.Fprintf(stdout, "instance  %s\n", inst.ID)
-	fmt.Fprintf(stdout, "recorded  %s by %s\n", inst.Created.Format(time.RFC3339), inst.Tool)
-	fmt.Fprintf(stdout, "command   %s\n", strings.Join(quoteArgs(inst.Command.Argv), " "))
+	fmt.Fprintf(stdout, "recorded  %s by %s\n", inst.Created.Format(time.RFC3339), codeinstances.SafeText(inst.Tool))
+	fmt.Fprintf(stdout, "command   %s\n", codeinstances.SafeText(codeinstances.ShellQuote(inst.Command.Argv)))
 	switch {
 	case r.TimedOut:
 		fmt.Fprintf(stdout, "ended     timed out after %d ms\n", r.DurationMS)
@@ -419,9 +421,9 @@ func show(args []string, stdout, stderr io.Writer) int {
 			took = fmt.Sprintf(" in %d ms", *c.DurationMS)
 		}
 		if c.Error != "" {
-			fmt.Fprintf(stdout, "  %3d  %6d ms  %s %s -> error%s: %s\n", c.Seq, c.AtMS, c.Request.Method, c.Request.URL, took, c.Error)
+			fmt.Fprintf(stdout, "  %3d  %6d ms  %s %s -> error%s: %s\n", c.Seq, c.AtMS, codeinstances.SafeText(c.Request.Method), codeinstances.SafeText(c.Request.URL), took, codeinstances.SafeText(c.Error))
 		} else {
-			fmt.Fprintf(stdout, "  %3d  %6d ms  %s %s -> %d (%d bytes)%s\n", c.Seq, c.AtMS, c.Request.Method, c.Request.URL, c.Response.Status, len(c.Response.Body.MustBytes()), took)
+			fmt.Fprintf(stdout, "  %3d  %6d ms  %s %s -> %d (%d bytes)%s\n", c.Seq, c.AtMS, codeinstances.SafeText(c.Request.Method), codeinstances.SafeText(c.Request.URL), c.Response.Status, len(c.Response.Body.MustBytes()), took)
 		}
 	}
 	counts := map[string]int{}
@@ -487,18 +489,6 @@ func interrupts() (context.Context, func()) {
 	ch := make(chan os.Signal, 1)
 	signal.Notify(ch, os.Interrupt)
 	return context.Background(), func() { signal.Stop(ch) }
-}
-
-func quoteArgs(argv []string) []string {
-	out := make([]string, len(argv))
-	for i, a := range argv {
-		if a == "" || strings.ContainsAny(a, " \t\n\"'\\$`") {
-			out[i] = fmt.Sprintf("%q", a)
-		} else {
-			out[i] = a
-		}
-	}
-	return out
 }
 
 func shrink(args []string, stdout, stderr io.Writer) int {
@@ -841,7 +831,7 @@ func serve(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	dir := fs.String("dir", "instances", "the folder to keep instances in")
 	addr := fs.String("addr", "127.0.0.1:7979", "the address to listen on")
-	token := fs.String("token", os.Getenv("CODEINSTANCES_TOKEN"), "the token clients must send (default $CODEINSTANCES_TOKEN)")
+	token := fs.String("token", os.Getenv("CODEINSTANCES_TOKEN"), "the token clients must send (default $CODEINSTANCES_TOKEN; when neither is set, a random one is made and printed)")
 	openRead := fs.Bool("open-read", false, "let anyone read without the token; uploads still need it")
 	maxBytes := fs.Int64("max-size", store.DefaultMaxBytes, "the largest instance to take, in bytes")
 	fs.Usage = func() {
@@ -860,9 +850,14 @@ func serve(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "codeinstances serve: -addr: %v\n", err)
 		return 2
 	}
-	if *token == "" && !isLoopback(host) {
-		fmt.Fprintln(stderr, "codeinstances serve: give -token (or set CODEINSTANCES_TOKEN) to serve beyond this machine")
-		return 2
+	made := false
+	if *token == "" {
+		b := make([]byte, 24)
+		if _, err := rand.Read(b); err != nil {
+			fmt.Fprintf(stderr, "codeinstances serve: %v\n", err)
+			return 2
+		}
+		*token, made = hex.EncodeToString(b), true
 	}
 	st, err := store.Open(*dir)
 	if err != nil {
@@ -874,12 +869,21 @@ func serve(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "codeinstances serve: %v\n", err)
 		return 2
 	}
-	entries, _ := st.List()
-	fmt.Fprintf(stderr, "codeinstances: serving %s (%d instances) at http://%s\n", *dir, len(entries), ln.Addr())
+	fmt.Fprintf(stderr, "codeinstances: serving %s (%d instances) at http://%s\n", *dir, len(st.List()), ln.Addr())
+	if made {
+		fmt.Fprintf(stderr, "codeinstances: token %s (set CODEINSTANCES_TOKEN or -token to choose one)\n", *token)
+	}
+	handler := &store.Server{Store: st, Token: *token, OpenRead: *openRead, MaxBytes: *maxBytes}
+	if isLoopback(host) {
+		// Only loopback names, so a web page can't reach the store by
+		// pointing a name of its own at 127.0.0.1.
+		handler.Hosts = []string{"127.0.0.1", "localhost", "::1", host}
+	}
 	srv := &http.Server{
-		Handler:           &store.Server{Store: st, Token: *token, OpenRead: *openRead, MaxBytes: *maxBytes},
+		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout:       10 * time.Minute,
+		ReadTimeout:       2 * time.Minute,
+		WriteTimeout:      2 * time.Minute,
 		IdleTimeout:       2 * time.Minute,
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -958,7 +962,7 @@ func push(args []string, stdout, stderr io.Writer) int {
 			if !p.Created {
 				state = "already there"
 			}
-			fmt.Fprintf(stdout, "%s  %s  %s (%s)\n", f, p.ID, p.URL, state)
+			fmt.Fprintf(stdout, "%s  %s  %s (%s)\n", f, p.ID, codeinstances.SafeText(p.URL), state)
 		}
 	}
 	if *asJSON {
@@ -1002,6 +1006,6 @@ func pull(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "codeinstances pull: %v\n", err)
 		return 2
 	}
-	fmt.Fprintf(stdout, "codeinstances: pulled %s (%s)\n", path, inst.Summary())
+	fmt.Fprintf(stdout, "codeinstances: pulled %s (%s)\n", path, codeinstances.SafeText(inst.Summary()))
 	return 0
 }

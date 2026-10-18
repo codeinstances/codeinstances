@@ -273,14 +273,21 @@ CODEINSTANCES_TOKEN=a-long-random-token codeinstances serve -dir instances
 `serve` runs a small HTTP server, on `127.0.0.1:7979` unless `-addr` says
 otherwise, that keeps instances in a folder, each as `<id>.instance`. It
 takes an upload only when the file is intact and its id checks out, and the
-same file pushed twice is kept once. With a token set, every request needs
-`Authorization: Bearer <token>` (`-open-read` lets anyone read); without one
-it refuses to listen beyond the machine. Its page lists the failures grouped
-by fingerprint and the latest instances, and its API is plain JSON:
+same file pushed twice is kept once. Every request needs
+`Authorization: Bearer <token>`; `-open-read` lets anyone read, and uploads
+still need the token. When no token is given, `serve` makes a random one and
+prints it. Uploads have to be sent as `Content-Type: application/json`, which
+a web page can't send to another site without asking first, and a store on a
+loopback address answers only to loopback host names, so a page can't reach
+it by pointing a name of its own at 127.0.0.1. The store reads its folder
+when it starts and keeps an index in memory; each download is checked again
+against its id. Its page lists the failures grouped by fingerprint and the
+latest instances; a browser can open it only with `-open-read`, since it
+can't send the token. The API is plain JSON:
 
 | Request | What it does |
 |---|---|
-| `POST /v1/instances` | Store the instance in the body (201 new, 200 already there, 422 edited, 413 over `-max-size`) |
+| `POST /v1/instances` | Store the instance in the body (201 new, 200 already there, 422 edited, 413 over `-max-size`, 503 when two uploads are already being read) |
 | `GET /v1/instances` | List the instances, newest first (`?failed=true` for failing ones) |
 | `GET /v1/instances/{id}` | Download one, by full id or a unique prefix of 12 or more hex digits |
 | `GET /v1/groups` | The failing instances grouped by fingerprint |
@@ -292,11 +299,15 @@ codeinstances pull 3f2a9c1e77b0            # writes 3f2a9c1e77b0.instance and ch
 codeinstances report failing.instance      # a Markdown bug report
 ```
 
-`pull` checks that the file it gets is intact and is the one asked for.
+`push` checks the store answers with the file's own id, and `pull` that the
+file it gets is intact and is the one asked for. Neither follows a redirect,
+so the token goes only where it was sent.
 `report` writes a bug report to paste into an issue: the command, how the
 run ended, the last lines of its output, the calls that failed, the
 fingerprint, and the `pull`, `show` and `replay` commands that bring the run
-back. [docs/ci.md](docs/ci.md) shows a GitHub Actions job that records the
+back. Text from the run goes in code spans and blocks, so it can't mention
+people or turn into links, and file names and commands are quoted for a
+POSIX shell, so pasting them runs nothing else. [docs/ci.md](docs/ci.md) shows a GitHub Actions job that records the
 tests and, when they fail, pushes the run and puts the report in the job
 summary.
 
@@ -341,7 +352,7 @@ test (a minute by default); `-v` lists the notes of passing tests too;
 
 `serve` flags: `-dir` (default `instances`), `-addr` (default
 `127.0.0.1:7979`), `-token` (default `$CODEINSTANCES_TOKEN`), `-open-read`,
-`-max-size` in bytes (default 256 MiB). `push` and `pull` take `-to` or
+`-max-size` in bytes (default 64 MiB). `push` and `pull` take `-to` or
 `-from` (default `$CODEINSTANCES_STORE`) and `-token`; `push -json` prints the
 results as JSON; `pull -o` names the file. `report -url` (default
 `$CODEINSTANCES_STORE`) adds the `pull` command; `-lines` sets how much output
@@ -427,7 +438,7 @@ with a second run, recorded while the servers were up, of the program that
 makes one extra request, and checks `diff` finds that request and times every
 call the two runs share. It records a third run while the HTTPS server is
 breaking item 7, and checks that `shrink`, against the first run, needs only
-that one answer of all the ones that differ. Last, it puts the first run and
+that one answer of all the ones that differ. Then it puts the first run and
 the shrunk failure in a folder and checks that `test` fails the program as it
 is and passes a fixed build that carries on when an item can't be read. It
 records two more failing runs, the item 7 bug again and then a second bug
@@ -515,9 +526,12 @@ Ctrl-C reaching the program while the recorder finishes.
   one GraphQL or JSON-RPC endpoint looks the same. Python exception groups
   and stack traces in other formats aren't read as traces.
 - The store is one server and one folder, with one token and no accounts.
-  Its lists and groups read every file each time, which suits thousands of
-  instances, not millions. It serves plain HTTP; put it behind an HTTPS proxy
-  to reach it over a network.
+  It reads every file when it starts and keeps an index in memory, which
+  suits thousands of instances, not millions; files put in the folder by
+  hand are seen at the next start. Reading an upload takes many times its
+  size in memory, so it reads two at a time and takes up to 64 MiB each by
+  default. It serves plain HTTP; put it behind an HTTPS proxy to reach it
+  over a network.
 - Nothing is scrubbed before a push or in a report beyond the redacted
   headers: changing bodies or query strings would stop the run replaying.
 - Replay has no time limit unless you give `-timeout`, so give one when

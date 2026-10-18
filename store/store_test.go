@@ -63,9 +63,6 @@ func TestStore(t *testing.T) {
 	if _, _, err := s.Put(edited); !errors.Is(err, instance.ErrModified) {
 		t.Fatal(err)
 	}
-	// A stray file in the folder is ignored.
-	os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("x"), 0o600)
-	os.WriteFile(filepath.Join(dir, strings.Repeat("a", 64)+".instance"), []byte("broken"), 0o600)
 
 	hex := strings.TrimPrefix(id, "sha256:")
 	for _, ref := range []string{id, hex, hex[:12], strings.ToUpper(hex[:20]), " sha256:" + hex[:16] + " "} {
@@ -84,25 +81,56 @@ func TestStore(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	entries, err := s.List()
-	if err != nil || len(entries) != 3 || entries[0].Command[1] != "3" || entries[2].ID != id {
-		t.Fatalf("%v %+v", err, entries)
+	entries := s.List()
+	if len(entries) != 3 || entries[0].Command[1] != "3" || entries[2].ID != id {
+		t.Fatalf("%+v", entries)
 	}
 	if entries[2].Failed || entries[2].Fingerprint != "" || !entries[0].Failed || !strings.HasPrefix(entries[0].Fingerprint, "fp1:") {
 		t.Fatalf("%+v", entries)
 	}
-	g, err := s.Groups()
-	if err != nil || g.Failing != 2 || g.Passed != 1 || len(g.Groups) != 1 || len(g.Groups[0].Runs) != 2 {
-		t.Fatalf("%v %+v", err, g)
+	g := s.Groups()
+	if g.Failing != 2 || g.Passed != 1 || len(g.Groups) != 1 || len(g.Groups[0].Runs) != 2 {
+		t.Fatalf("%+v", g)
+	}
+
+	// Opened again, the store reads what is in the folder, leaving out stray
+	// files, damaged ones, files under the wrong id and symlinks.
+	os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("x"), 0o600)
+	os.WriteFile(filepath.Join(dir, strings.Repeat("a", 64)+".instance"), []byte("broken"), 0o600)
+	os.WriteFile(filepath.Join(dir, strings.Repeat("b", 64)+".instance"), a, 0o600)
+	if err := os.Symlink(filepath.Join(dir, hex+".instance"), filepath.Join(dir, strings.Repeat("c", 64)+".instance")); err != nil {
+		t.Log("no symlinks here:", err)
+	}
+	s2, err := Open(dir)
+	if err != nil || len(s2.List()) != 3 {
+		t.Fatalf("%v %+v", err, s2.List())
+	}
+	for _, ref := range []string{strings.Repeat("a", 12), strings.Repeat("b", 12), strings.Repeat("c", 12)} {
+		if _, _, err := s2.Get(ref); !errors.Is(err, ErrNotFound) {
+			t.Errorf("%s: %v", ref, err)
+		}
+	}
+
+	// A stored file damaged on disk isn't served, and the next push of the
+	// instance puts it right.
+	os.WriteFile(filepath.Join(dir, hex+".instance"), []byte("damaged"), 0o600)
+	if _, _, err := s2.Get(id); !errors.Is(err, ErrDamaged) {
+		t.Fatal(err)
+	}
+	if _, created, err := s2.Put(a); err != nil || !created {
+		t.Fatal(created, err)
+	}
+	if data, _, err := s2.Get(id); err != nil || !bytes.Equal(data, a) {
+		t.Fatal(err)
 	}
 }
 
 func TestAmbiguousPrefix(t *testing.T) {
 	s, _ := Open(t.TempDir())
 	// Two ids that share the first 12 digits can't be made on purpose, so
-	// the files are named by hand.
+	// the index is filled by hand.
 	for _, suffix := range []string{"1", "2"} {
-		os.WriteFile(filepath.Join(s.Dir(), "abcdefabcdef"+strings.Repeat("0", 51)+suffix+".instance"), nil, 0o600)
+		s.index["abcdefabcdef"+strings.Repeat("0", 51)+suffix] = indexed{}
 	}
 	if _, err := s.Resolve("abcdefabcdef"); !errors.Is(err, ErrAmbiguous) {
 		t.Fatal(err)
@@ -114,6 +142,9 @@ func do(t *testing.T, h http.Handler, method, path, token string, body []byte) *
 	req := httptest.NewRequest(method, path, bytes.NewReader(body))
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
 	}
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
@@ -136,7 +167,7 @@ func TestServer(t *testing.T) {
 	}
 	w := do(t, srv, "POST", "/v1/instances", "sesame", a)
 	var p Pushed
-	if w.Code != 201 || json.Unmarshal(w.Body.Bytes(), &p) != nil || p.ID != idOf(t, a) || !p.Created || p.URL != "http://example.com/v1/instances/"+p.ID {
+	if w.Code != 201 || json.Unmarshal(w.Body.Bytes(), &p) != nil || p.ID != idOf(t, a) || !p.Created || p.Path != "/v1/instances/"+p.ID || strings.Contains(w.Body.String(), "example.com") {
 		t.Fatalf("%d %s", w.Code, w.Body)
 	}
 	if w := do(t, srv, "POST", "/v1/instances/", "sesame", a); w.Code != 200 {
@@ -150,6 +181,35 @@ func TestServer(t *testing.T) {
 	}
 	if w := do(t, srv, "POST", "/v1/instances", "sesame", bytes.Repeat([]byte(" "), 5000)); w.Code != 413 {
 		t.Fatal("too big", w.Code)
+	}
+	// A form post, as a web page could send without asking, is refused.
+	req := httptest.NewRequest("POST", "/v1/instances", bytes.NewReader(a))
+	req.Header.Set("Authorization", "Bearer sesame")
+	req.Header.Set("Content-Type", "text/plain")
+	if w := httptest.NewRecorder(); func() int { srv.ServeHTTP(w, req); return w.Code }() != 415 {
+		t.Fatal("text/plain upload")
+	}
+	// The scheme is case-insensitive.
+	req = httptest.NewRequest("GET", "/v1/instances", nil)
+	req.Header.Set("Authorization", "bearer sesame")
+	if w := httptest.NewRecorder(); func() int { srv.ServeHTTP(w, req); return w.Code }() != 200 {
+		t.Fatal("lowercase bearer")
+	}
+	// Uploads past the limit at once are turned away.
+	for i := 0; i < DefaultMaxUploads; i++ {
+		srv.slots() <- struct{}{}
+	}
+	if w := do(t, srv, "POST", "/v1/instances", "sesame", a); w.Code != 503 || w.Header().Get("Retry-After") == "" {
+		t.Fatal("busy", w.Code)
+	}
+	for i := 0; i < DefaultMaxUploads; i++ {
+		<-srv.slots()
+	}
+	if w := do(t, srv, "DELETE", "/v1/instances", "sesame", nil); w.Code != 405 || w.Header().Get("Allow") != "GET, HEAD, POST" {
+		t.Fatal("delete", w.Code)
+	}
+	if w := do(t, srv, "HEAD", "/v1/groups", "sesame", nil); w.Code != 200 {
+		t.Fatal("head", w.Code)
 	}
 	s.Put(sample(t, 2, 0, ""))
 
@@ -202,6 +262,9 @@ func TestClient(t *testing.T) {
 	if err != nil || !bytes.Equal(data, a) || inst.ID != p.ID {
 		t.Fatal(err)
 	}
+	if p, err := c.Push(a); err != nil || p.Created {
+		t.Fatal("second push", err)
+	}
 	if _, err := c.Push([]byte("nope")); err == nil {
 		t.Fatal("pushed a file that isn't an instance")
 	}
@@ -221,6 +284,38 @@ func TestClient(t *testing.T) {
 	}))
 	defer liar.Close()
 	if _, _, err := (&Client{URL: liar.URL}).Pull(p.ID); err == nil || !strings.Contains(err.Error(), "not "+p.ID) {
+		t.Fatal(err)
+	}
+}
+
+func TestHostsAndRedirects(t *testing.T) {
+	s, _ := Open(t.TempDir())
+	srv := &Server{Store: s, Token: "sesame", OpenRead: true, Hosts: []string{"127.0.0.1", "localhost", "::1"}}
+	for host, code := range map[string]int{"127.0.0.1:7979": 200, "localhost": 200, "[::1]:7979": 200, "LOCALHOST:1": 200, "evil.example:7979": 421, "127.0.0.2": 421} {
+		req := httptest.NewRequest("GET", "/v1/instances", nil)
+		req.Host = host
+		w := httptest.NewRecorder()
+		srv.ServeHTTP(w, req)
+		if w.Code != code {
+			t.Errorf("%s: %d, want %d", host, w.Code, code)
+		}
+	}
+	// The client follows no redirect, so the token stays where it was sent.
+	var leaked bool
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { leaked = r.Header.Get("Authorization") != "" }))
+	defer other.Close()
+	mover := httptest.NewServer(http.RedirectHandler(other.URL+"/v1/instances", http.StatusTemporaryRedirect))
+	defer mover.Close()
+	_, err := (&Client{URL: mover.URL, Token: "sesame"}).Push(sample(t, 1, 0, ""))
+	if err == nil || !strings.Contains(err.Error(), "redirect") || leaked {
+		t.Fatal(err, leaked)
+	}
+	// A server that answers with another id is caught.
+	odd := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"id":"sha256:`+strings.Repeat("0", 64)+`","path":"/x","created":true}`)
+	}))
+	defer odd.Close()
+	if _, err := (&Client{URL: odd.URL}).Push(sample(t, 1, 0, "")); err == nil || !strings.Contains(err.Error(), "another id") {
 		t.Fatal(err)
 	}
 }

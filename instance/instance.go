@@ -278,6 +278,7 @@ func WriteAtomic(path string, data []byte) error {
 	return nil
 }
 
+// Load reads an instance file and checks it is intact.
 func Load(path string) (*Instance, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {

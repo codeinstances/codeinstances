@@ -113,32 +113,52 @@ type Grouping struct {
 // biggest group first, then the one seen last. Runs that passed are counted
 // and left out.
 func GroupFailures(runs []NamedInstance) *Grouping {
+	fr := make([]FingerprintedRun, len(runs))
+	for i, r := range runs {
+		fr[i] = FingerprintedRun{Name: r.Name, Created: r.Instance.Created, Failed: Failed(r.Instance)}
+		if fr[i].Failed {
+			fr[i].Fingerprint = FingerprintOf(r.Instance)
+		}
+	}
+	return GroupFingerprints(fr)
+}
+
+// FingerprintedRun is a run whose fingerprint is already known, for
+// grouping without reading the instance again.
+type FingerprintedRun struct {
+	Name        string
+	Created     time.Time
+	Failed      bool
+	Fingerprint Fingerprint
+}
+
+// GroupFingerprints is GroupFailures for runs fingerprinted already.
+func GroupFingerprints(runs []FingerprintedRun) *Grouping {
 	g := &Grouping{Groups: []Group{}}
 	index := map[string]int{}
-	var members [][]NamedInstance
+	var members [][]FingerprintedRun
 	for _, r := range runs {
-		if !Failed(r.Instance) {
+		if !r.Failed {
 			g.Passed++
 			continue
 		}
 		g.Failing++
-		fp := FingerprintOf(r.Instance)
-		i, ok := index[fp.ID]
+		i, ok := index[r.Fingerprint.ID]
 		if !ok {
 			i = len(g.Groups)
-			index[fp.ID] = i
-			g.Groups = append(g.Groups, Group{Fingerprint: fp})
+			index[r.Fingerprint.ID] = i
+			g.Groups = append(g.Groups, Group{Fingerprint: r.Fingerprint})
 			members = append(members, nil)
 		}
 		members[i] = append(members[i], r)
 	}
 	for i := range g.Groups {
 		m := members[i]
-		sort.SliceStable(m, func(a, b int) bool { return m[a].Instance.Created.Before(m[b].Instance.Created) })
+		sort.SliceStable(m, func(a, b int) bool { return m[a].Created.Before(m[b].Created) })
 		grp := &g.Groups[i]
 		for _, r := range m {
 			grp.Runs = append(grp.Runs, r.Name)
-			t := r.Instance.Created
+			t := r.Created
 			if t.IsZero() {
 				continue
 			}

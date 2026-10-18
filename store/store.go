@@ -37,22 +37,71 @@ var (
 	ErrBadRef = fmt.Errorf("an id is %d to 64 hex digits, with or without sha256: in front", MinPrefix)
 )
 
-// Store is a folder of instances named by their ids.
+// Store is a folder of instances named by their ids. It keeps an index in
+// memory, built when the store is opened and added to on every Put; files
+// put in the folder by other means are seen when the store is opened again.
 type Store struct {
-	dir string
-	mu  sync.Mutex
+	dir   string
+	mu    sync.Mutex
+	index map[string]indexed // by hex id
 }
 
-// Open opens the store in dir, creating the folder if it isn't there.
+type indexed struct {
+	entry Entry
+	fp    codeinstances.Fingerprint
+}
+
+// Open opens the store in dir, creating the folder if it isn't there, and
+// reads every instance in it. Files that aren't intact instances under
+// their own id, or aren't regular files, are left out.
 func Open(dir string) (*Store, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	return &Store{dir: dir}, nil
+	s := &Store{dir: dir, index: map[string]indexed{}}
+	ids, err := s.fileIDs()
+	if err != nil {
+		return nil, err
+	}
+	for _, hex := range ids {
+		data, err := s.read(hex)
+		if err != nil {
+			continue
+		}
+		if inst, err := instance.Parse(data); err == nil && inst.ID == "sha256:"+hex {
+			s.add(hex, inst, int64(len(data)))
+		}
+	}
+	return s, nil
 }
 
 // Dir is the store's folder.
 func (s *Store) Dir() string { return s.dir }
+
+func (s *Store) add(hex string, inst *instance.Instance, size int64) {
+	e := Entry{ID: inst.ID, Created: inst.Created, Command: inst.Command.Argv, Ended: codeinstances.Ended(inst.Result),
+		DurationMS: inst.Result.DurationMS, Calls: len(inst.Calls), Values: len(inst.Values), Bytes: size,
+		Failed: codeinstances.Failed(inst)}
+	var fp codeinstances.Fingerprint
+	if e.Failed {
+		fp = codeinstances.FingerprintOf(inst)
+		e.Fingerprint = fp.ID
+	}
+	s.index[hex] = indexed{e, fp}
+}
+
+// read reads a stored file, which has to be a regular file.
+func (s *Store) read(hex string) ([]byte, error) {
+	path := filepath.Join(s.dir, hex+".instance")
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s isn't a regular file", path)
+	}
+	return os.ReadFile(path)
+}
 
 // Put checks that data is an intact instance and keeps it. It returns the
 // instance's id and whether it was new to the store.
@@ -62,15 +111,22 @@ func (s *Store) Put(data []byte) (string, bool, error) {
 		return "", false, err
 	}
 	hex := strings.TrimPrefix(inst.ID, "sha256:")
-	path := filepath.Join(s.dir, hex+".instance")
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, err := os.Stat(path); err == nil {
-		return inst.ID, false, nil
+	if _, ok := s.index[hex]; ok {
+		if stored, err := s.read(hex); err == nil {
+			if id, err := instance.ComputeID(stored); err == nil && id == inst.ID && instance.VerifyBytes(stored) == nil {
+				return inst.ID, false, nil
+			}
+		}
+		// The stored copy was changed or removed behind the store's back.
 	}
-	if err := instance.WriteAtomic(path, data); err != nil {
+	// Whatever is at the path isn't an intact copy (or it would be in the
+	// index), so it is replaced.
+	if err := instance.WriteAtomic(filepath.Join(s.dir, hex+".instance"), data); err != nil {
 		return "", false, err
 	}
+	s.add(hex, inst, int64(len(data)))
 	return inst.ID, true, nil
 }
 
@@ -80,18 +136,10 @@ func (s *Store) Resolve(ref string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if len(hex) == 64 {
-		if _, err := os.Stat(filepath.Join(s.dir, hex+".instance")); err != nil {
-			return "", ErrNotFound
-		}
-		return "sha256:" + hex, nil
-	}
-	ids, err := s.ids()
-	if err != nil {
-		return "", err
-	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	found := ""
-	for _, id := range ids {
+	for id := range s.index {
 		if strings.HasPrefix(id, hex) {
 			if found != "" {
 				return "", ErrAmbiguous
@@ -105,15 +153,24 @@ func (s *Store) Resolve(ref string) (string, error) {
 	return "sha256:" + found, nil
 }
 
-// Get returns a stored instance's bytes and its full id.
+// ErrDamaged means a stored file no longer matches its id.
+var ErrDamaged = errors.New("the stored file was changed or removed")
+
+// Get returns a stored instance's bytes and its full id, checked again.
 func (s *Store) Get(ref string) ([]byte, string, error) {
 	id, err := s.Resolve(ref)
 	if err != nil {
 		return nil, "", err
 	}
-	data, err := os.ReadFile(filepath.Join(s.dir, strings.TrimPrefix(id, "sha256:")+".instance"))
+	data, err := s.read(strings.TrimPrefix(id, "sha256:"))
 	if err != nil {
-		return nil, "", err
+		return nil, "", ErrDamaged
+	}
+	if err := instance.VerifyBytes(data); err != nil {
+		return nil, "", ErrDamaged
+	}
+	if got, _ := instance.ComputeID(data); got != id {
+		return nil, "", ErrDamaged
 	}
 	return data, id, nil
 }
@@ -132,84 +189,46 @@ type Entry struct {
 	Fingerprint string    `json:"fingerprint,omitempty"`
 }
 
-// List describes every stored instance, newest first. Files that don't
-// read as instances are skipped.
-func (s *Store) List() ([]Entry, error) {
-	insts, err := s.all()
-	if err != nil {
-		return nil, err
+// List describes every stored instance, newest first.
+func (s *Store) List() []Entry {
+	s.mu.Lock()
+	entries := make([]Entry, 0, len(s.index))
+	for _, ix := range s.index {
+		entries = append(entries, ix.entry)
 	}
-	entries := make([]Entry, 0, len(insts))
-	for _, si := range insts {
-		inst := si.inst
-		e := Entry{ID: inst.ID, Created: inst.Created, Command: inst.Command.Argv, Ended: codeinstances.Ended(inst.Result),
-			DurationMS: inst.Result.DurationMS, Calls: len(inst.Calls), Values: len(inst.Values), Bytes: si.size,
-			Failed: codeinstances.Failed(inst)}
-		if e.Failed {
-			e.Fingerprint = codeinstances.FingerprintOf(inst).ID
-		}
-		entries = append(entries, e)
-	}
-	sort.SliceStable(entries, func(i, j int) bool {
+	s.mu.Unlock()
+	sort.Slice(entries, func(i, j int) bool {
 		if !entries[i].Created.Equal(entries[j].Created) {
 			return entries[i].Created.After(entries[j].Created)
 		}
 		return entries[i].ID < entries[j].ID
 	})
-	return entries, nil
+	return entries
 }
 
 // Groups groups the stored failing instances by fingerprint, naming each
 // run by its id.
-func (s *Store) Groups() (*codeinstances.Grouping, error) {
-	insts, err := s.all()
-	if err != nil {
-		return nil, err
+func (s *Store) Groups() *codeinstances.Grouping {
+	s.mu.Lock()
+	runs := make([]codeinstances.FingerprintedRun, 0, len(s.index))
+	for _, ix := range s.index {
+		runs = append(runs, codeinstances.FingerprintedRun{Name: ix.entry.ID, Created: ix.entry.Created, Failed: ix.entry.Failed, Fingerprint: ix.fp})
 	}
-	runs := make([]codeinstances.NamedInstance, len(insts))
-	for i, si := range insts {
-		runs[i] = codeinstances.NamedInstance{Name: si.inst.ID, Instance: si.inst}
-	}
-	return codeinstances.GroupFailures(runs), nil
+	s.mu.Unlock()
+	sort.Slice(runs, func(i, j int) bool { return runs[i].Name < runs[j].Name })
+	return codeinstances.GroupFingerprints(runs)
 }
 
-type storedInstance struct {
-	inst *instance.Instance
-	size int64
-}
-
-func (s *Store) all() ([]storedInstance, error) {
-	ids, err := s.ids()
-	if err != nil {
-		return nil, err
-	}
-	var out []storedInstance
-	for _, id := range ids {
-		path := filepath.Join(s.dir, id+".instance")
-		data, err := os.ReadFile(path)
-		if err != nil {
-			continue
-		}
-		inst, err := instance.Parse(data)
-		if err != nil || inst.ID != "sha256:"+id {
-			continue
-		}
-		out = append(out, storedInstance{inst, int64(len(data))})
-	}
-	return out, nil
-}
-
-// ids lists the hex ids of the files in the store, sorted.
-func (s *Store) ids() ([]string, error) {
+// fileIDs lists the hex ids of the files in the store's folder, sorted.
+func (s *Store) fileIDs() ([]string, error) {
 	entries, err := os.ReadDir(s.dir)
 	if err != nil {
 		return nil, err
 	}
 	var ids []string
 	for _, e := range entries {
-		name := e.Name()
-		hex, ok := strings.CutSuffix(name, ".instance")
-		if ok && !e.IsDir() && len(hex) == 64 && isHex(hex) {
+		hex, ok := strings.CutSuffix(e.Name(), ".instance")
+		if ok && len(hex) == 64 && isHex(hex) {
 			ids = append(ids, hex)
 		}
 	}

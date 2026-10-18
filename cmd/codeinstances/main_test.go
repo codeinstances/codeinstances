@@ -279,13 +279,6 @@ func TestInterruptReachesTheProgramNotTheRecorder(t *testing.T) {
 	}
 }
 
-func TestQuoteArgs(t *testing.T) {
-	got := strings.Join(quoteArgs([]string{"a", "b c", "", `d"e`}), " ")
-	if got != `a "b c" "" "d\"e"` {
-		t.Fatal(got)
-	}
-}
-
 func TestShowJSONIsTheFileItself(t *testing.T) {
 	file := filepath.Join("..", "..", "docs", "example.instance")
 	data, _ := os.ReadFile(file)
@@ -529,7 +522,7 @@ func TestPushPullReport(t *testing.T) {
 	}
 
 	o, _, code = cli(t, "report", file)
-	for _, want := range []string{"## exit 1: error: disk full\n", "codeinstances pull -from " + ts.URL + " -o bug.instance " + inst.ID, "codeinstances replay bug.instance"} {
+	for _, want := range []string{"## exit 1: `error: disk full`\n", "codeinstances pull -from " + ts.URL + " -o bug.instance " + inst.ID, "codeinstances replay bug.instance"} {
 		if code != 0 || !strings.Contains(o, want) {
 			t.Fatalf("report lacks %q:\n%s", want, o)
 		}
@@ -548,7 +541,6 @@ func TestPushPullReport(t *testing.T) {
 		{"push", "-to", ts.URL, filepath.Join(dir, "missing")},
 		{"report"},
 		{"report", filepath.Join(dir, "missing")},
-		{"serve", "-addr", "0.0.0.0:0", "-token", ""},
 		{"serve", "-addr", "nonsense"},
 		{"serve", "extra"},
 	} {
@@ -569,19 +561,36 @@ func TestServeAndStop(t *testing.T) {
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	line, _ := bufio.NewReader(pipe).ReadString('\n')
+	rd := bufio.NewReader(pipe)
+	line, _ := rd.ReadString('\n')
 	_, addr, _ := strings.Cut(line, " at ")
 	addr = strings.TrimSpace(addr)
-	if !strings.HasPrefix(addr, "http://127.0.0.1:") {
+	tokenLine, _ := rd.ReadString('\n')
+	token := strings.Fields(strings.TrimPrefix(tokenLine, "codeinstances: token "))
+	if !strings.HasPrefix(addr, "http://127.0.0.1:") || len(token) == 0 || len(token[0]) != 48 {
 		cmd.Process.Kill()
-		t.Fatalf("%q", line)
+		t.Fatalf("%q %q", line, tokenLine)
 	}
 	go io.Copy(io.Discard, pipe)
-	resp, err := http.Get(addr + "/v1/instances")
-	if err != nil || resp.StatusCode != 200 {
-		t.Fatal(err)
+	get := func(host, tok string) int {
+		req, _ := http.NewRequest("GET", addr+"/v1/instances", nil)
+		if host != "" {
+			req.Host = host
+		}
+		if tok != "" {
+			req.Header.Set("Authorization", "Bearer "+tok)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
 	}
-	resp.Body.Close()
+	// A token is made when none is given; a foreign host name is refused.
+	if get("", token[0]) != 200 || get("", "") != 401 || get("evil.example", token[0]) != 421 {
+		t.Fatal(get("", token[0]), get("", ""), get("evil.example", token[0]))
+	}
 	cmd.Process.Signal(syscall.SIGINT)
 	if err := cmd.Wait(); err != nil {
 		t.Fatalf("serve didn't stop cleanly: %v", err)

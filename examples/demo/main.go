@@ -562,14 +562,14 @@ func demo(cli string, replays int) (*report, error) {
 		b, _ := os.ReadFile(pulled)
 		add("pull fetches a run back by a 12-digit id prefix", code == 0 && bytes.Equal(a, b), "")
 	}
-	g, err := st.Groups()
-	add("the store groups what it holds", err == nil && g.Failing == 3 && len(g.Groups) == 2, "")
+	g := st.Groups()
+	add("the store groups what it holds", g.Failing == 3 && len(g.Groups) == 2, "")
 	out, code, err = runCLI(cli, "report", "-url", storeURL, refused)
 	if err != nil {
 		return rep, err
 	}
 	add("report writes a bug report that says how to pull and replay the run",
-		code == 0 && strings.HasPrefix(out, "## exit 1: the order was refused") && strings.Contains(out, "codeinstances pull -from "+storeURL), "")
+		code == 0 && strings.HasPrefix(out, "## exit 1: `the order was refused") && strings.Contains(out, "codeinstances pull -from "+storeURL), "")
 	return finish(rep), nil
 }
 
