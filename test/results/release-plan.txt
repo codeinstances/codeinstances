@@ -1,5 +1,5 @@
 # The release plan's cases
-# recorded 2026-10-18 07:55 UTC at ff55924, CodeInstances 0.4.0, go1.24.7 linux/amd64
+# recorded 2026-10-18 08:38 UTC at b5db99a, CodeInstances 0.5.0, go1.24.7 linux/amd64
 # Linux 6.18.44-fc-v139, Intel(R) Xeon(R) Processor @ 2.10GHz, 2 CPUs
 # command: python3 -B -m unittest discover -s scripts -p *_test.py -v
 

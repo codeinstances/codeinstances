@@ -1,5 +1,5 @@
 # Every test, verbose
-# recorded 2026-10-18 07:54 UTC at ff55924, CodeInstances 0.4.0, go1.24.7 linux/amd64
+# recorded 2026-10-18 08:36 UTC at b5db99a, CodeInstances 0.5.0, go1.24.7 linux/amd64
 # Linux 6.18.44-fc-v139, Intel(R) Xeon(R) Processor @ 2.10GHz, 2 CPUs
 # command: go test -count=1 -v ./...
 
@@ -8,23 +8,23 @@
 === RUN   TestExitCodeIsRecordedAndCompared
 --- PASS: TestExitCodeIsRecordedAndCompared (0.07s)
 === RUN   TestChangedProgramsAreCaught
---- PASS: TestChangedProgramsAreCaught (0.09s)
+--- PASS: TestChangedProgramsAreCaught (0.10s)
 === RUN   TestStderrComparisonCanBeSkipped
 --- PASS: TestStderrComparisonCanBeSkipped (0.04s)
 === RUN   TestCrashesAreRecordedAndReplayed
---- PASS: TestCrashesAreRecordedAndReplayed (0.03s)
+--- PASS: TestCrashesAreRecordedAndReplayed (0.04s)
 === RUN   TestKilledProgramIsRecorded
---- PASS: TestKilledProgramIsRecorded (0.03s)
+--- PASS: TestKilledProgramIsRecorded (0.05s)
 === RUN   TestTimeoutIsRecorded
 --- PASS: TestTimeoutIsRecorded (0.61s)
 === RUN   TestKeptEnvironmentIsSetOnReplay
---- PASS: TestKeptEnvironmentIsSetOnReplay (0.02s)
+--- PASS: TestKeptEnvironmentIsSetOnReplay (0.03s)
 === RUN   TestLargeAndBinaryOutput
---- PASS: TestLargeAndBinaryOutput (1.54s)
+--- PASS: TestLargeAndBinaryOutput (1.71s)
 === RUN   TestReplayAnotherCommand
---- PASS: TestReplayAnotherCommand (0.06s)
+--- PASS: TestReplayAnotherCommand (0.05s)
 === RUN   TestOutputIsPassedThrough
---- PASS: TestOutputIsPassedThrough (0.03s)
+--- PASS: TestOutputIsPassedThrough (0.02s)
 === RUN   TestErrors
 --- PASS: TestErrors (0.00s)
 === RUN   TestCompareOutput
@@ -48,7 +48,7 @@
 === RUN   TestCompareSpeedOrder
 --- PASS: TestCompareSpeedOrder (0.00s)
 === RUN   TestCompareRecordedRuns
---- PASS: TestCompareRecordedRuns (0.04s)
+--- PASS: TestCompareRecordedRuns (0.07s)
 === RUN   TestClipKeepsCharactersWhole
 --- PASS: TestClipKeepsCharactersWhole (0.00s)
 === RUN   TestNormalize
@@ -59,20 +59,28 @@
 --- PASS: TestFingerprintAndGroups (0.00s)
 === RUN   TestGroupsWithoutTimes
 --- PASS: TestGroupsWithoutTimes (0.00s)
+=== RUN   TestBugReport
+--- PASS: TestBugReport (0.00s)
+=== RUN   TestShellQuote
+--- PASS: TestShellQuote (0.00s)
+=== RUN   TestSafeText
+--- PASS: TestSafeText (0.00s)
+=== RUN   TestOddCharactersAreDropped
+--- PASS: TestOddCharactersAreDropped (0.00s)
 === RUN   TestShrinkFindsTheAnswersThatMatter
---- PASS: TestShrinkFindsTheAnswersThatMatter (0.34s)
+--- PASS: TestShrinkFindsTheAnswersThatMatter (0.31s)
 === RUN   TestShrinkRefusesWhatItCannotShrink
---- PASS: TestShrinkRefusesWhatItCannotShrink (0.27s)
+--- PASS: TestShrinkRefusesWhatItCannotShrink (0.28s)
 === RUN   TestShrinkStopsAtTheRunLimit
---- PASS: TestShrinkStopsAtTheRunLimit (0.31s)
+--- PASS: TestShrinkStopsAtTheRunLimit (0.34s)
 === RUN   TestDdminHelpers
 --- PASS: TestDdminHelpers (0.00s)
 === RUN   TestInstancesAsRegressionTests
 --- PASS: TestInstancesAsRegressionTests (0.09s)
 === RUN   TestShrinkStopsWhenCancelled
---- PASS: TestShrinkStopsWhenCancelled (0.03s)
+--- PASS: TestShrinkStopsWhenCancelled (0.04s)
 PASS
-ok  	github.com/codeinstances/codeinstances	3.700s
+ok  	github.com/codeinstances/codeinstances	3.946s
 === RUN   TestUsageAndVersion
 --- PASS: TestUsageAndVersion (0.00s)
 === RUN   TestRecordShowReplayVerify
@@ -84,21 +92,23 @@ ok  	github.com/codeinstances/codeinstances	3.700s
 === RUN   TestKilledRecordLeavesNoFile
 --- PASS: TestKilledRecordLeavesNoFile (0.02s)
 === RUN   TestInterruptReachesTheProgramNotTheRecorder
---- PASS: TestInterruptReachesTheProgramNotTheRecorder (0.81s)
-=== RUN   TestQuoteArgs
---- PASS: TestQuoteArgs (0.00s)
+--- PASS: TestInterruptReachesTheProgramNotTheRecorder (0.82s)
 === RUN   TestShowJSONIsTheFileItself
 --- PASS: TestShowJSONIsTheFileItself (0.00s)
 === RUN   TestDiff
 --- PASS: TestDiff (0.02s)
 === RUN   TestShrinkAndTest
---- PASS: TestShrinkAndTest (0.25s)
+--- PASS: TestShrinkAndTest (0.29s)
 === RUN   TestGroup
 --- PASS: TestGroup (0.01s)
+=== RUN   TestPushPullReport
+--- PASS: TestPushPullReport (0.01s)
+=== RUN   TestServeAndStop
+--- PASS: TestServeAndStop (0.01s)
 PASS
-ok  	github.com/codeinstances/codeinstances/cmd/codeinstances	1.175s
+ok  	github.com/codeinstances/codeinstances/cmd/codeinstances	1.237s
 === RUN   TestDemo
-ok   record finishes and keeps the exit code exit 0 codeinstances: kept /tmp/codeinstances-demo-4214087324/demo.instance (692ea5800ba2: /tmp/TestDemo2610369005/001/codeinstances-demo -child, exit 0, 23 calls, 5 values, 78 ms)
+ok   record finishes and keeps the exit code exit 0 codeinstances: kept /tmp/codeinstances-demo-1244488486/demo.instance (8622e02839d9: /tmp/TestDemo3182599826/001/codeinstances-demo -child, exit 0, 23 calls, 5 values, 62 ms)
 ok   every request reached the live servers and was kept 23 calls kept, 23 served live
 ok   hooked clock and random values were kept 5 values
 ok   secret headers are redacted Set-Cookie
@@ -108,37 +118,41 @@ ok   two more failing runs are recorded exits [1 1]
 ok   live servers are down before replay 
 ok   3 replays offline all match the recording 
 ok   an extra request is caught request GET https://api.demo.test/quote?again=1 isn't in the recording
-ok   an unhooked clock is caught stdout line 1: recorded "started 2026-10-18T10:54:06.619023137+03:00", replayed "started 2026-10-18T10:54:07.343114607+03:00"
+ok   an unhooked clock is caught stdout line 1: recorded "started 2026-10-18T11:36:13.990247875+03:00", replayed "started 2026-10-18T11:36:14.571821877+03:00"
 ok   verify accepts the untouched file 
 ok   verify catches an edited file 
 ok   diff finds a run the same as itself 
 ok   diff finds the extra request in a second run 25 differences, 22 calls changed, 1 only in b
 ok   diff times every paired call 23 calls timed in both runs
-ok   shrink narrows the failure to item 7's answer 1 of 23 differing answers needed, 13 runs
+ok   shrink narrows the failure to item 7's answer 1 of 23 differing answers needed, 11 runs
 ok   test fails the build that still has the bug codeinstances: 1 of 2 tests passed
 ok   test passes the fixed build codeinstances: 2 of 2 tests passed
 ok   group puts repeats of one bug together 3 failing runs in 2 groups
+ok   push uploads the failing runs to a store 3 pushed
+ok   pull fetches a run back by a 12-digit id prefix 
+ok   the store groups what it holds 
+ok   report writes a bug report that says how to pull and replay the run 
 codeinstances-demo: every check passed
---- PASS: TestDemo (3.31s)
+--- PASS: TestDemo (3.12s)
 PASS
-ok  	github.com/codeinstances/codeinstances/examples/demo	3.310s
+ok  	github.com/codeinstances/codeinstances/examples/demo	3.121s
 === RUN   TestOutsideCodeinstancesTheValuesAreReal
 --- PASS: TestOutsideCodeinstancesTheValuesAreReal (0.01s)
 === RUN   TestRecordThenReplay
---- PASS: TestRecordThenReplay (0.03s)
+--- PASS: TestRecordThenReplay (0.04s)
 === RUN   TestReplayRunsOutAndSaysSo
 --- PASS: TestReplayRunsOutAndSaysSo (0.01s)
 === RUN   TestUnknownModeIsIgnored
 --- PASS: TestUnknownModeIsIgnored (0.01s)
 === RUN   TestTransportTrustsTheRunAuthority
-2026/10/18 10:54:07 http: TLS handshake error from 127.0.0.1:60564: remote error: tls: bad certificate
+2026/10/18 11:36:14 http: TLS handshake error from 127.0.0.1:57166: remote error: tls: bad certificate
 --- PASS: TestTransportTrustsTheRunAuthority (0.02s)
 === RUN   TestIntnPanicsOnZero
 --- PASS: TestIntnPanicsOnZero (0.00s)
 === RUN   TestReplayedBytesOfAnotherLengthAreNotUsed
---- PASS: TestReplayedBytesOfAnotherLengthAreNotUsed (0.01s)
+--- PASS: TestReplayedBytesOfAnotherLengthAreNotUsed (0.00s)
 PASS
-ok  	github.com/codeinstances/codeinstances/hook	0.087s
+ok  	github.com/codeinstances/codeinstances/hook	0.098s
 === RUN   TestBodyTextAndBinary
 --- PASS: TestBodyTextAndBinary (0.00s)
 === RUN   TestSaveLoadRoundTrip
@@ -168,13 +182,15 @@ ok  	github.com/codeinstances/codeinstances/hook	0.087s
 --- PASS: TestValidateBodiesAndValues (0.00s)
 === RUN   TestCallDuration
 --- PASS: TestCallDuration (0.00s)
+=== RUN   TestValidateRefusesWhatCouldFoolATerminal
+--- PASS: TestValidateRefusesWhatCouldFoolATerminal (0.00s)
 PASS
-ok  	github.com/codeinstances/codeinstances/instance	0.028s
+ok  	github.com/codeinstances/codeinstances/instance	0.022s
 ?   	github.com/codeinstances/codeinstances/internal/buildinfo	[no test files]
 === RUN   TestIssueAndVerify
 --- PASS: TestIssueAndVerify (0.00s)
 PASS
-ok  	github.com/codeinstances/codeinstances/internal/ca	0.011s
+ok  	github.com/codeinstances/codeinstances/internal/ca	0.006s
 === RUN   TestRecordThenReplayHTTPAndHTTPS
 --- PASS: TestRecordThenReplayHTTPAndHTTPS (0.01s)
 === RUN   TestSecretsAreRedactedUnlessKept
@@ -186,22 +202,34 @@ ok  	github.com/codeinstances/codeinstances/internal/ca	0.011s
 === RUN   TestRepeatedRequestsReplayInOrder
 --- PASS: TestRepeatedRequestsReplayInOrder (0.01s)
 === RUN   TestConcurrentRequests
---- PASS: TestConcurrentRequests (0.27s)
+--- PASS: TestConcurrentRequests (0.34s)
 === RUN   TestStrictOrder
 --- PASS: TestStrictOrder (0.01s)
 === RUN   TestLargeBodies
---- PASS: TestLargeBodies (0.27s)
+--- PASS: TestLargeBodies (0.25s)
 === RUN   TestTooLargeBodyIsKeptAsAFailedCallAndReplayed
---- PASS: TestTooLargeBodyIsKeptAsAFailedCallAndReplayed (0.63s)
+--- PASS: TestTooLargeBodyIsKeptAsAFailedCallAndReplayed (0.88s)
 === RUN   TestRecordedRequestsLeaveOutConnectionHeaders
 --- PASS: TestRecordedRequestsLeaveOutConnectionHeaders (0.00s)
 === RUN   TestNonProxyRequestIsRefused
 --- PASS: TestNonProxyRequestIsRefused (0.00s)
 === RUN   TestCertificatesAreIssuedForTheRequestedHost
---- PASS: TestCertificatesAreIssuedForTheRequestedHost (0.02s)
+--- PASS: TestCertificatesAreIssuedForTheRequestedHost (0.01s)
 === RUN   TestCloseIsSafeTwiceAndRefusesLateRequests
---- PASS: TestCloseIsSafeTwiceAndRefusesLateRequests (0.01s)
+--- PASS: TestCloseIsSafeTwiceAndRefusesLateRequests (0.00s)
 === RUN   TestHelpers
 --- PASS: TestHelpers (0.00s)
 PASS
-ok  	github.com/codeinstances/codeinstances/internal/capture	1.264s
+ok  	github.com/codeinstances/codeinstances/internal/capture	1.571s
+=== RUN   TestStore
+--- PASS: TestStore (0.01s)
+=== RUN   TestAmbiguousPrefix
+--- PASS: TestAmbiguousPrefix (0.00s)
+=== RUN   TestServer
+--- PASS: TestServer (0.01s)
+=== RUN   TestClient
+--- PASS: TestClient (0.01s)
+=== RUN   TestHostsAndRedirects
+--- PASS: TestHostsAndRedirects (0.00s)
+PASS
+ok  	github.com/codeinstances/codeinstances/store	0.032s

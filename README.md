@@ -457,14 +457,15 @@ report to stdout; any failed check makes it exit 1.
 the release smoke check, and writes them to [test/results](test/results). From
 the latest recording, on a 2-CPU Linux machine (details in the files):
 
-- 82 Go tests pass, and the race detector finds nothing
+- 93 Go tests pass, and the race detector finds nothing
   ([tests.txt](test/results/tests.txt), [race.txt](test/results/race.txt)).
-- The demo's 20 checks pass. Recording the 23 calls took 100 ms; the 10
-  offline replays took 36 to 53 ms each; the instance file was 20,635 bytes;
-  comparing it with the second run took 8 ms. In this recording, 23 answers
+- The demo's 24 checks pass. Recording the 23 calls took 64 ms; the 10
+  offline replays took 34 to 47 ms each; the instance file was 20,618 bytes;
+  comparing it with the second run took 7 ms. In this recording, 23 answers
   differed between the first run and the failing one, and `shrink` found the
-  1 that matters in 9 runs and 286 ms; the two regression tests ran in 66 ms;
-  `group` put the three failing runs in 2 groups in 10 ms
+  1 that matters in 12 runs and 453 ms; the two regression tests ran in 90 ms;
+  `group` put the three failing runs in 2 groups in 13 ms; pushing the three
+  to a store took 18 ms and pulling one back 5 ms
   ([demo.json](test/results/demo.json)).
 - The smoke check passes on release-style binaries, including recording,
   replaying, comparing and testing runs of a Python program that knows

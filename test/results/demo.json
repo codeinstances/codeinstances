@@ -1,8 +1,8 @@
 {
   "tool": {
-    "version": "0.4.0",
+    "version": "0.5.0",
     "format": "codeinstances/0",
-    "revision": "ff55924f952ccbb778a540602da05051edd320eb",
+    "revision": "b5db99a79620e6e83e6e73fdd33e690fa16e9bde",
     "modified": true,
     "go": "go1.24.7",
     "os": "linux",
@@ -13,7 +13,7 @@
     {
       "name": "record finishes and keeps the exit code",
       "passed": true,
-      "detail": "exit 0 codeinstances: kept /tmp/codeinstances-demo-2279816474/demo.instance (3e85ca2b00fe: /tmp/tmp.RoeNifRikx/bin/codeinstances-demo -child, exit 0, 23 calls, 5 values, 75 ms)"
+      "detail": "exit 0 codeinstances: kept /tmp/codeinstances-demo-982301889/demo.instance (251a4792d1bf: /tmp/tmp.oQqanPRNvr/bin/codeinstances-demo -child, exit 0, 23 calls, 5 values, 43 ms)"
     },
     {
       "name": "every request reached the live servers and was kept",
@@ -60,7 +60,7 @@
     {
       "name": "an unhooked clock is caught",
       "passed": true,
-      "detail": "stdout line 1: recorded \"started 2026-10-18T10:55:33.180416927+03:00\", replayed \"started 2026-10-18T10:55:34.016443157+03:00\""
+      "detail": "stdout line 1: recorded \"started 2026-10-18T11:38:15.984389658+03:00\", replayed \"started 2026-10-18T11:38:16.696221308+03:00\""
     },
     {
       "name": "verify accepts the untouched file",
@@ -87,7 +87,7 @@
     {
       "name": "shrink narrows the failure to item 7's answer",
       "passed": true,
-      "detail": "1 of 23 differing answers needed, 9 runs"
+      "detail": "1 of 23 differing answers needed, 12 runs"
     },
     {
       "name": "test fails the build that still has the bug",
@@ -103,32 +103,51 @@
       "name": "group puts repeats of one bug together",
       "passed": true,
       "detail": "3 failing runs in 2 groups"
+    },
+    {
+      "name": "push uploads the failing runs to a store",
+      "passed": true,
+      "detail": "3 pushed"
+    },
+    {
+      "name": "pull fetches a run back by a 12-digit id prefix",
+      "passed": true
+    },
+    {
+      "name": "the store groups what it holds",
+      "passed": true
+    },
+    {
+      "name": "report writes a bug report that says how to pull and replay the run",
+      "passed": true
     }
   ],
   "passed": true,
   "calls": 23,
   "values": 5,
-  "instance_file_bytes": 20635,
-  "record_ms": 100,
+  "instance_file_bytes": 20618,
+  "record_ms": 64,
   "replay_ms": [
-    51,
-    45,
-    43,
-    48,
-    46,
-    53,
     36,
+    42,
+    43,
     37,
+    36,
+    47,
+    44,
     40,
-    40
+    36,
+    34
   ],
-  "diff_ms": 8,
-  "shrink_ms": 286,
-  "shrink_runs": 9,
+  "diff_ms": 7,
+  "shrink_ms": 453,
+  "shrink_runs": 12,
   "shrink_answers_changed": 23,
   "shrink_answers_needed": 1,
-  "test_ms": 66,
-  "group_ms": 10,
+  "test_ms": 90,
+  "group_ms": 13,
   "groups": 2,
+  "push_ms": 18,
+  "pull_ms": 5,
   "live_server_requests": 23
 }
