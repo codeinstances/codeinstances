@@ -218,9 +218,13 @@ func (s *shrinker) build(keep []int) *instance.Instance {
 	calls = append(calls, s.passOnly...)
 	for i := range calls {
 		calls[i].Seq = i + 1
+		// A shrunk instance is a run of its own: answers here came from
+		// either run, so a fork's lineage no longer holds.
+		calls[i].FromSeq, calls[i].Given = 0, false
 	}
 	inst := *s.fail
 	inst.ID = ""
+	inst.Fork = nil
 	inst.Calls = calls
 	return &inst
 }

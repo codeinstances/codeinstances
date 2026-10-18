@@ -427,7 +427,7 @@ func (p *Proxy) exchange(w http.ResponseWriter, r *http.Request, target string) 
 			k = tooLargeKey(r.Method, target)
 			body = nil
 		}
-		if p.answerFork(w, r, target, body, k, at, arrived) {
+		if p.answerFork(w, r, target, body, k, tooLarge, at, arrived) {
 			return
 		}
 	}
@@ -448,7 +448,7 @@ func (p *Proxy) exchange(w http.ResponseWriter, r *http.Request, target string) 
 // answerFork serves a forking proxy's request from its answers, or turns it
 // away when the fork is offline. It returns false when the request should go
 // out as usual.
-func (p *Proxy) answerFork(w http.ResponseWriter, r *http.Request, target string, body []byte, k string, at int64, arrived time.Time) bool {
+func (p *Proxy) answerFork(w http.ResponseWriter, r *http.Request, target string, body []byte, k string, tooLarge bool, at int64, arrived time.Time) bool {
 	p.mu.Lock()
 	q := p.answers[k]
 	var a Answer
@@ -462,21 +462,28 @@ func (p *Proxy) answerFork(w http.ResponseWriter, r *http.Request, target string
 		return false
 	}
 	p.seq++
-	call := instance.Call{Seq: p.seq, Kind: instance.KindHTTP, AtMS: at,
+	seq := p.seq
+	p.mu.Unlock()
+
+	call := instance.Call{Seq: seq, Kind: instance.KindHTTP, AtMS: at,
 		Request: instance.Request{Method: r.Method, URL: target, Header: p.keep(passable(r.Header)), Body: instance.NewBody(body)}}
 	switch {
+	case !found && tooLarge:
+		// It would never have been sent, offline or not, and is kept the
+		// way a recording keeps it, so a replay matches it.
+		call.Error = ErrRequestTooLarge
 	case !found:
 		call.Error = ErrOffline
 	case a.Given:
 		call.Given = true
 		call.Response, call.Error = a.Call.Response, a.Call.Error
 	default:
-		from := a.Call.Seq
-		call.FromSeq = from
+		call.FromSeq = a.Call.Seq
 		call.Response, call.Error = a.Call.Response, a.Call.Error
 	}
 	d := time.Since(arrived).Milliseconds()
 	call.DurationMS = &d
+	p.mu.Lock()
 	p.calls = append(p.calls, call)
 	p.mu.Unlock()
 	if call.Error != "" {

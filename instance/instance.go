@@ -409,6 +409,27 @@ func (inst *Instance) Validate() error {
 			return errors.New("fork: needs the parent's sha256 id and a step of 1 or more")
 		}
 	}
+	for k := range inst.Command.Env {
+		up := strings.ToUpper(k)
+		if strings.HasSuffix(up, "_PROXY") || strings.HasPrefix(up, "CODEINSTANCES_") {
+			return fmt.Errorf("command: the kept variable %s would steer the program around the recording", k)
+		}
+	}
+	given := 0
+	for _, c := range inst.Calls {
+		if c.Given {
+			given++
+		}
+		if (c.FromSeq > 0 || c.Given) && inst.Fork == nil {
+			return fmt.Errorf("call %d: from_seq and given belong to forks", c.Seq)
+		}
+		if c.FromSeq > 0 && c.FromSeq >= inst.Fork.At {
+			return fmt.Errorf("call %d: from_seq %d isn't before the fork's step %d", c.Seq, c.FromSeq, inst.Fork.At)
+		}
+	}
+	if given > 1 {
+		return errors.New("a fork gives at most one answer")
+	}
 	if inst.Result.Signal != "" && !signalName.MatchString(inst.Result.Signal) {
 		return errors.New("result: the signal isn't a signal name")
 	}
@@ -443,6 +464,9 @@ func (inst *Instance) Validate() error {
 		}
 		if err := c.Request.Body.check(); err != nil {
 			return fmt.Errorf("call %d request: %w", c.Seq, err)
+		}
+		if hasControl(c.Error) {
+			return fmt.Errorf("call %d: the error holds control characters", c.Seq)
 		}
 		if (c.Response == nil) == (c.Error == "") {
 			return fmt.Errorf("call %d: needs exactly one of response and error", c.Seq)

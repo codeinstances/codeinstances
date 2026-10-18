@@ -1101,6 +1101,12 @@ func fork(args []string, stdout, stderr io.Writer) int {
 	sum := codeinstances.Summarize(f)
 	fmt.Fprintf(stderr, "codeinstances: forked %s at call %d: %d answered from the parent, %d given, %d sent, %d not sent (offline)\n",
 		instance.ShortID(parent.ID), *at, sum.FromParent, sum.Given, sum.Sent, sum.Offline)
+	if opts.Answer != nil && sum.Given == 0 {
+		fmt.Fprintf(stderr, "codeinstances: the answer was never given: no request matched the parent's call %d\n", *at)
+	}
+	if unused := *at - 1 - sum.FromParent; unused > 0 {
+		fmt.Fprintf(stderr, "codeinstances: %d of the parent's answers before the step weren't asked for, so the program changed before the step\n", unused)
+	}
 	fmt.Fprintf(stderr, "codeinstances: kept %s (%s)\n", *out, codeinstances.SafeText(f.Summary()))
 	if f.Result.ExitCode >= 0 {
 		return f.Result.ExitCode

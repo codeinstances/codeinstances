@@ -15,6 +15,12 @@ import (
 	"github.com/codeinstances/codeinstances/internal/capture"
 )
 
+// sample is a small valid instance with two calls.
+func sample() *instance.Instance {
+	return &instance.Instance{Command: instance.Command{Argv: []string{"prog"}}, Calls: []instance.Call{
+		call(1, "GET", "https://a.test/1", "", 200, "x", 1), call(2, "GET", "https://a.test/2", "", 200, "y", 1)}}
+}
+
 func forkAs(t *testing.T, w *world, parent *instance.Instance, opts ForkOptions) *instance.Instance {
 	t.Helper()
 	t.Setenv("CI_TEST_CHILD", "web")
@@ -129,9 +135,50 @@ func TestReadAnswer(t *testing.T) {
 	if a, err := ReadAnswer(write(`{"error": "connection refused"}`)); err != nil || a.Error == "" {
 		t.Fatal(err)
 	}
-	for _, bad := range []string{`{}`, `{"status": 99}`, `{"status": 200, "error": "x"}`, `{"status": 200, "bdy": "typo"}`, `nope`} {
+	for _, bad := range []string{`{}`, `{"status": 99}`, `{"status": 103}`, `{"status": 200, "error": "x"}`, `{"status": 200, "bdy": "typo"}`, `nope`,
+		`{"error": "x", "body": "y"}`, `{"error": "a\u001b[2J"}`, `{"status": 200, "header": {"Content-Length": ["5"]}}`,
+		`{"status": 200, "header": {"X-A": ["a\r\nInjected: 1"]}}`, `{"status": 200, "header": {"bad name": ["x"]}}`} {
 		if _, err := ReadAnswer(write(bad)); err == nil {
 			t.Errorf("%s: accepted", bad)
 		}
+	}
+}
+
+func TestForkRules(t *testing.T) {
+	inst := sample()
+	inst.Calls[0].FromSeq = 1
+	if inst.Validate() == nil {
+		t.Fatal("from_seq without a fork")
+	}
+	inst.Fork = &instance.Fork{Parent: "sha256:" + strings.Repeat("a", 64), At: 1}
+	if inst.Validate() == nil {
+		t.Fatal("from_seq at the step")
+	}
+	inst.Fork.At = 2
+	if err := inst.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	inst.Calls[0].FromSeq, inst.Calls[0].Given, inst.Calls[1].Given = 0, true, true
+	if inst.Validate() == nil {
+		t.Fatal("two given answers")
+	}
+	inst = sample()
+	inst.Command.Env = map[string]string{"no_proxy": "*"}
+	if inst.Validate() == nil {
+		t.Fatal("a kept proxy variable")
+	}
+}
+
+func TestShrinkOfAForkIsARunOfItsOwn(t *testing.T) {
+	pass := recordedResult(t, sixCalls(t, []string{"good", "good", "good", "good", "good", "good"}))
+	fail := recordedResult(t, sixCalls(t, []string{"good", "good", "bad", "good", "bad", "good"}, "report"))
+	fail.Fork = &instance.Fork{Parent: "sha256:" + strings.Repeat("b", 64), At: 3}
+	fail.Calls[0].FromSeq, fail.Calls[1].FromSeq = 1, 2
+	res, err := Shrink(context.Background(), pass, fail, ShrinkOptions{Timeout: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Instance.Fork != nil || res.Instance.Calls[0].FromSeq != 0 || res.Instance.Validate() != nil {
+		t.Fatalf("%+v", res.Instance.Fork)
 	}
 }

@@ -168,7 +168,12 @@ safe for older readers to ignore.
 - codeinstances 0.2.0 added `duration_ms` to calls. Files written before it
   don't have the member and stay valid.
 - codeinstances 0.6.0 added `fork` to instances and `from_seq` and `given`
-  to calls, for forks. Older files don't have them and stay valid.
+  to calls, for forks. Older files don't have them and stay valid. `from_seq`
+  and `given` appear only in forks, `from_seq` is below the fork's `at`, and
+  a fork has at most one `given` call. 0.6.0 also refuses kept environment
+  variables named like proxy settings (`*_PROXY`) or `CODEINSTANCES_*`, which
+  would steer a replayed program around the recording, and call errors with
+  control characters.
 - codeinstances 0.5.0 refuses a `method`, `url` or `signal` that breaks the
   rules above, since tools print them to terminals and into bug reports.
   Files that codeinstances recorded always kept them.

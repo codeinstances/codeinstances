@@ -335,8 +335,18 @@ another command after `--` to fork a changed build.
 
 The result is a new instance, `fork.instance` by default (`-o`), that names
 its parent and step, and marks each call: answered from the parent's call N,
-given at the fork, or sent. `fork` exits as the program did and says how many
-calls went each way. The fork replays, compares and shrinks like any other
+given at the fork, or sent. `fork` exits as the program did (so a program
+that exits 2 looks like a usage error) and says how many calls went each
+way, and whether the given answer was never asked for or the program left
+some of the parent's earlier answers unused, which means it changed before
+the step.
+
+A fork runs the command stored in the parent with the parent's kept
+environment, and without `-offline` it reaches the real servers. Treat a
+parent from someone else as you would a script from someone else: look at it
+with `show` first, or give your own command after `--`. `fork` has no `-env`;
+it takes the parent's. A run recorded with `-resolve` or `-upstream-ca` needs
+them again for a live fork. The fork replays, compares and shrinks like any other
 instance; `codeinstances diff run.instance fork.instance` shows what the
 step changed. Forking one past the last call (`-at` with the call count plus
 one) answers every recorded call and sends only what the program asks for
@@ -578,6 +588,10 @@ Ctrl-C reaching the program while the recorder finishes.
   over a network.
 - Nothing is scrubbed before a push or in a report beyond the redacted
   headers: changing bodies or query strings would stop the run replaying.
+- The parent's answers come back with their secret headers redacted, as in
+  a replay, so a program that reads a cookie from them gets `[redacted]`,
+  and from the step on sends it to the real servers that way. Record the
+  parent with `-keep-secrets` to fork through a login.
 - A fork answers by matching requests to the parent's calls, so a program
   that changed what it sends before the step goes live (or offline) earlier
   than the step. Clock and random values carry no time in the file, so a

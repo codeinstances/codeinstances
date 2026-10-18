@@ -419,7 +419,7 @@ func TestEnvironmentForTheProgram(t *testing.T) {
 	t.Setenv("HTTPS_PROXY", "http://outer:1")
 	t.Setenv("no_proxy", "everything")
 	t.Setenv("CI_KEEP_ME", "yes")
-	env := environment(runSpec{mode: "replay", proxy: "http://127.0.0.1:9", work: "/w", env: map[string]string{"CI_KEEP_ME": "replayed"}}, "/w/ca.pem")
+	env := environment(runSpec{mode: "replay", proxy: "http://127.0.0.1:9", work: "/w", env: map[string]string{"CI_KEEP_ME": "replayed", "NO_PROXY": "*", "CODEINSTANCES_MODE": "record"}}, "/w/ca.pem")
 	got := map[string]string{}
 	for _, kv := range env {
 		k, v, _ := strings.Cut(kv, "=")
@@ -431,8 +431,9 @@ func TestEnvironmentForTheProgram(t *testing.T) {
 	if got["HTTPS_PROXY"] != "http://127.0.0.1:9" || got["https_proxy"] != "http://127.0.0.1:9" {
 		t.Fatal("proxy not set")
 	}
-	if _, ok := got["no_proxy"]; ok {
-		t.Fatal("no_proxy kept")
+	// No way around the proxy, from the environment or a kept variable.
+	if got["no_proxy"] != "" || got["NO_PROXY"] != "" && runtime.GOOS != "windows" {
+		t.Fatalf("no_proxy %q, NO_PROXY %q", got["no_proxy"], got["NO_PROXY"])
 	}
 	if got["CI_KEEP_ME"] != "replayed" || got[hook.EnvMode] != "replay" || got["SSL_CERT_FILE"] != "/w/ca.pem" || got[hook.EnvValuesIn] == "" {
 		t.Fatal(got)

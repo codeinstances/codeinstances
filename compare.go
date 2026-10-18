@@ -275,9 +275,9 @@ func callDiff(a, b instance.Call) []string {
 		}
 		return d
 	case a.Error != "":
-		return append(d, fmt.Sprintf("a got no answer (%s), b got status %d", a.Error, b.Response.Status))
+		return append(d, fmt.Sprintf("a got no answer (%s), b got status %d", SafeText(a.Error), b.Response.Status))
 	case b.Error != "":
-		return append(d, fmt.Sprintf("a got status %d, b got no answer (%s)", a.Response.Status, b.Error))
+		return append(d, fmt.Sprintf("a got status %d, b got no answer (%s)", a.Response.Status, SafeText(b.Error)))
 	}
 	if a.Response.Status != b.Response.Status {
 		d = append(d, fmt.Sprintf("status: a %d, b %d", a.Response.Status, b.Response.Status))

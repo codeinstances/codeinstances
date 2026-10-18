@@ -301,11 +301,18 @@ func environment(s runSpec, caFile string) []string {
 		env = append(env, kv)
 	}
 	for k, v := range s.env {
+		// A kept variable can't steer the program around the proxy or the
+		// hook: NO_PROXY=* would let an offline fork or a replay send
+		// requests.
+		if isProxyVar(k) || isHookVar(k) {
+			continue
+		}
 		env = append(env, k+"="+v)
 	}
 	for _, k := range []string{"HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"} {
 		env = append(env, k+"="+s.proxy)
 	}
+	env = append(env, "NO_PROXY=", "no_proxy=", "ALL_PROXY=", "all_proxy=")
 	env = append(env,
 		hook.EnvMode+"="+s.mode,
 		hook.EnvValuesOut+"="+filepath.Join(s.work, "values-out"),
@@ -320,6 +327,10 @@ func environment(s runSpec, caFile string) []string {
 		env = append(env, hook.EnvValuesIn+"="+filepath.Join(s.work, "values-in"))
 	}
 	return dedupe(env)
+}
+
+func isHookVar(k string) bool {
+	return strings.HasPrefix(strings.ToUpper(k), "CODEINSTANCES_")
 }
 
 func isProxyVar(k string) bool {

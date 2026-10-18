@@ -10,8 +10,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/codeinstances/codeinstances/instance"
@@ -72,14 +75,36 @@ func ReadAnswer(path string) (*Answer, error) {
 	if err := dec.Decode(&a); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
-	if (a.Error == "") == (a.Status == 0) {
-		return nil, fmt.Errorf("%s: give a status (100 to 999) or an error, not both", path)
+	if a.Error != "" {
+		if a.Status != 0 || a.Header != nil || a.Body != "" {
+			return nil, fmt.Errorf("%s: an error stands alone, without a status, headers or a body", path)
+		}
+		if SafeText(a.Error) != a.Error {
+			return nil, fmt.Errorf("%s: the error has control characters or line breaks", path)
+		}
+		return &a, nil
 	}
-	if a.Error == "" && (a.Status < 100 || a.Status > 999) {
-		return nil, fmt.Errorf("%s: status %d", path, a.Status)
+	if a.Status < 200 || a.Status > 599 {
+		return nil, fmt.Errorf("%s: give a status from 200 to 599, or an error", path)
+	}
+	for name, values := range a.Header {
+		if !headerName.MatchString(name) {
+			return nil, fmt.Errorf("%s: %q isn't a header name", path, name)
+		}
+		switch http.CanonicalHeaderKey(name) {
+		case "Content-Length", "Transfer-Encoding", "Connection", "Keep-Alive", "Trailer", "Upgrade":
+			return nil, fmt.Errorf("%s: the %s header is set by the proxy, not the answer", path, name)
+		}
+		for _, v := range values {
+			if strings.ContainsAny(v, "\r\n\x00") || SafeText(v) != strings.TrimSpace(v) {
+				return nil, fmt.Errorf("%s: the %s header has control characters", path, name)
+			}
+		}
 	}
 	return &a, nil
 }
+
+var headerName = regexp.MustCompile("^[!#$%&'*+\\-.^_`|~0-9A-Za-z]+$")
 
 // ForkSummary counts where a fork's calls got their answers.
 type ForkSummary struct {
@@ -122,6 +147,9 @@ func Fork(ctx context.Context, parent *instance.Instance, opts ForkOptions) (*in
 	}
 	if opts.Answer != nil && opts.At > len(parent.Calls) {
 		return nil, errors.New("an answer replaces the parent's call at the step, and there is none there")
+	}
+	if opts.Answer != nil && parent.Calls[opts.At-1].Error == capture.ErrRequestTooLarge {
+		return nil, errors.New("the parent's call at the step was never sent (its body was too large), so there is no request to answer")
 	}
 	var answers []capture.Answer
 	for _, c := range parent.Calls[:opts.At-1] {
