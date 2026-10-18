@@ -234,10 +234,10 @@ func diff(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("diff", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	noStderr := fs.Bool("ignore-stderr", false, "leave stderr out of the comparison")
-	values := fs.Bool("values", false, "compare the clock and random values themselves, not only how many of each")
+	values := fs.Bool("values", false, "compare the hooked values (clock, random, bytes) themselves, not only how many of each kind")
 	asJSON := fs.Bool("json", false, "print the comparison as JSON")
 	fs.Usage = func() {
-		fmt.Fprintln(stderr, "usage: codeinstances diff [flags] a.instance b.instance")
+		fmt.Fprintln(stderr, "usage: codeinstances diff [flags] a.instance b.instance (flags go before the files)")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {

@@ -118,13 +118,15 @@ Calls are paired by method, URL and request body, in order, and those left
 over by method and URL alone, so a request whose body changed shows up as a
 change instead of one call missing and one extra. For each pair, `diff`
 compares the status and the response body: JSON bodies by member, down to the
-first value that differs, other text by line, binary bodies by size. Headers
+first value that differs (numbers as written, so `1.0` and `1` differ), other
+text by line, binary bodies by the first byte that differs. Headers
 aren't compared, since they carry dates and other noise. How the runs ended
 and what they printed are compared too.
 
 Two separate runs read different clocks and draw different random numbers,
-so by default `diff` compares only how many values of each kind each run
-asked for; `-values` compares the values themselves. A different command,
+so by default `diff` compares only how many hooked values of each kind
+(clock, random, bytes) each run asked for; `-values` compares the values
+themselves. A different command,
 kept environment or tool version is shown as a note, not counted as a
 difference. Speed is shown but never counted: the whole run's time, and for
 recordings made with 0.2.0 or later, the calls whose time changed most.
@@ -148,8 +150,9 @@ replay; `-resolve host=addr` sends a host name to another address, like curl's
 real servers; `-keep-secrets` keeps the headers that are redacted by default;
 `-timeout 30s` kills the program after that long; `-q` hides its output.
 
-`diff` flags: `-values` compares the clock and random values themselves;
-`-ignore-stderr` leaves stderr out; `-json` prints the comparison as JSON.
+`diff` flags, which go before the two files: `-values` compares the hooked
+values themselves; `-ignore-stderr` leaves stderr out; `-json` prints the
+comparison as JSON.
 
 `replay` flags: `-strict` requires HTTP requests in exactly the recorded order
 (by default each request gets the next recorded answer for the same method,
@@ -251,7 +254,9 @@ atomic saves),
 the proxy (HTTPS and HTTP replayed with the servers shut down, 64 concurrent
 requests replayed three times, strict order, 4 and 8 MiB bodies, redaction,
 upstream errors replayed as the same 502), changed programs (an extra request,
-a missing request, an extra random value, an unhooked clock), crashes, killed
+a missing request, an extra random value, an unhooked clock), comparing runs
+(call pairing, changed request bodies, JSON paths, line and byte differences,
+value counts, notes that don't count, speed order), crashes, killed
 programs and timeouts, a recorder killed with SIGKILL leaving no file, and
 Ctrl-C reaching the program while the recorder finishes.
 

@@ -6,6 +6,7 @@ package codeinstances
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/codeinstances/codeinstances/instance"
 )
@@ -124,7 +125,9 @@ func TestCompareErrorsAndBodies(t *testing.T) {
 		{`{"a b":true}`, `{"a b":false}`, `at $["a b"]: a true, b false`},
 		{`{"x":1, "y":2}`, `{"y":2,"x":1}`, "is the same JSON written differently"},
 		{`{"x":1.0}`, `{"x":1}`, "at $.x: a 1.0, b 1"},
-		{"\xff\x00", "\xfe", "differs (2 bytes in a, 1 in b)"},
+		{"\xff\x00", "\xfe", "differs from byte 1 (2 bytes in a, 1 in b)"},
+		{"\xff\x00\x01", "\xff\x00\x02", "differs from byte 3 (3 bytes in a, 3 in b)"},
+		{"", "hello", `line 1 is only in b: "hello"`},
 		{"a\nb", "a\nb\n", "differs only in its last newline"},
 		{"a\n", "a\nb\n", `line 2 is only in b: "b"`},
 	}
@@ -204,5 +207,13 @@ func TestCompareRecordedRuns(t *testing.T) {
 		"GET https://secure.test/a (a call 1, b call 1): response body line 1")
 	if c.Calls.OnlyB != 1 || c.Calls.Changed != 2 {
 		t.Fatalf("%+v", c.Calls)
+	}
+}
+
+func TestClipKeepsCharactersWhole(t *testing.T) {
+	s := strings.Repeat("x", 116) + strings.Repeat("é", 10)
+	got := clip(s)
+	if !utf8.ValidString(got) || !strings.HasSuffix(got, "...") || len(got) > 120 {
+		t.Fatalf("%q", got)
 	}
 }

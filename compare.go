@@ -152,7 +152,7 @@ func outputDiff(name string, a, b []byte) string {
 		return ""
 	}
 	if !utf8.Valid(a) || !utf8.Valid(b) {
-		return fmt.Sprintf("%s differs (%d bytes in a, %d in b)", name, len(a), len(b))
+		return name + " " + bytesDiff(a, b)
 	}
 	line, x, y, hx, hy := firstLineDiff(a, b)
 	switch {
@@ -298,7 +298,7 @@ func bodyDiff(name string, a, b []byte) string {
 			return name + " is the same JSON written differently"
 		}
 	}
-	if len(a) > 0 && len(b) > 0 && utf8.Valid(a) && utf8.Valid(b) {
+	if utf8.Valid(a) && utf8.Valid(b) {
 		line, x, y, hx, hy := firstLineDiff(a, b)
 		switch {
 		case !hx && !hy:
@@ -310,7 +310,17 @@ func bodyDiff(name string, a, b []byte) string {
 		}
 		return fmt.Sprintf("%s line %d: a %q, b %q", name, line, clip(x), clip(y))
 	}
-	return fmt.Sprintf("%s differs (%d bytes in a, %d in b)", name, len(a), len(b))
+	return name + " " + bytesDiff(a, b)
+}
+
+// bytesDiff describes two different byte strings by size and by where they
+// first differ.
+func bytesDiff(a, b []byte) string {
+	i := 0
+	for i < len(a) && i < len(b) && a[i] == b[i] {
+		i++
+	}
+	return fmt.Sprintf("differs from byte %d (%d bytes in a, %d in b)", i+1, len(a), len(b))
 }
 
 func decodeJSON(data []byte) (any, error) {

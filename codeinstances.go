@@ -28,6 +28,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/codeinstances/codeinstances/hook"
 	"github.com/codeinstances/codeinstances/instance"
@@ -456,7 +457,11 @@ func compareOutput(name string, a, b []byte) string {
 
 func clip(s string) string {
 	if len(s) > 120 {
-		return s[:117] + "..."
+		n := 117
+		for n > 0 && !utf8.RuneStart(s[n]) {
+			n--
+		}
+		return s[:n] + "..."
 	}
 	return s
 }
