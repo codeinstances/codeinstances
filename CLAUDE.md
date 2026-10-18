@@ -74,6 +74,10 @@ static/images.
 Every number comes from `test/results/`; when a recording changes a number,
 update the site too.
 
+SoftDevStudio.com (`photozeitgeist/softdevstudio.com`) lists CodeInstances as
+its fourteenth project. Each release gets a short note there, rephrased from
+the site's posts, following that repo's CONTENT-PLAN.md (2.8).
+
 ## Next
 
 Nothing is decided beyond the long-range plan above. Agree the next phase with
