@@ -1,8 +1,8 @@
 {
   "tool": {
-    "version": "0.5.0",
+    "version": "0.6.0",
     "format": "codeinstances/0",
-    "revision": "b5db99a79620e6e83e6e73fdd33e690fa16e9bde",
+    "revision": "e6ad0d76b061c848deca892dc5c9ef9702b812b3",
     "modified": true,
     "go": "go1.24.7",
     "os": "linux",
@@ -13,7 +13,7 @@
     {
       "name": "record finishes and keeps the exit code",
       "passed": true,
-      "detail": "exit 0 codeinstances: kept /tmp/codeinstances-demo-982301889/demo.instance (251a4792d1bf: /tmp/tmp.oQqanPRNvr/bin/codeinstances-demo -child, exit 0, 23 calls, 5 values, 43 ms)"
+      "detail": "exit 0 codeinstances: kept /tmp/codeinstances-demo-100929465/demo.instance (e6b004a3d992: /tmp/tmp.xqgNfkyyAa/bin/codeinstances-demo -child, exit 0, 23 calls, 5 values, 42 ms)"
     },
     {
       "name": "every request reached the live servers and was kept",
@@ -60,7 +60,7 @@
     {
       "name": "an unhooked clock is caught",
       "passed": true,
-      "detail": "stdout line 1: recorded \"started 2026-10-18T11:38:15.984389658+03:00\", replayed \"started 2026-10-18T11:38:16.696221308+03:00\""
+      "detail": "stdout line 1: recorded \"started 2026-10-18T12:03:02.821302859+03:00\", replayed \"started 2026-10-18T12:03:03.481229839+03:00\""
     },
     {
       "name": "verify accepts the untouched file",
@@ -77,7 +77,7 @@
     {
       "name": "diff finds the extra request in a second run",
       "passed": true,
-      "detail": "26 differences, 23 calls changed, 1 only in b"
+      "detail": "25 differences, 22 calls changed, 1 only in b"
     },
     {
       "name": "diff times every paired call",
@@ -87,7 +87,7 @@
     {
       "name": "shrink narrows the failure to item 7's answer",
       "passed": true,
-      "detail": "1 of 23 differing answers needed, 12 runs"
+      "detail": "1 of 23 differing answers needed, 9 runs"
     },
     {
       "name": "test fails the build that still has the bug",
@@ -120,34 +120,44 @@
     {
       "name": "report writes a bug report that says how to pull and replay the run",
       "passed": true
+    },
+    {
+      "name": "fork with a given answer runs the what-if offline",
+      "passed": true,
+      "detail": "codeinstances: kept /tmp/codeinstances-demo-100929465/what-if.instance (30f4ff857d01: /tmp/tmp.xqgNfkyyAa/bin/codeinstances-demo -child, exit 1, 2 calls, 3 values, 15 ms)"
+    },
+    {
+      "name": "fork past the last call answers every call from the parent and comes out the same",
+      "passed": true
     }
   ],
   "passed": true,
   "calls": 23,
   "values": 5,
-  "instance_file_bytes": 20618,
-  "record_ms": 64,
+  "instance_file_bytes": 20616,
+  "record_ms": 59,
   "replay_ms": [
+    32,
+    35,
+    36,
+    36,
     36,
     42,
-    43,
+    36,
     37,
-    36,
-    47,
-    44,
-    40,
-    36,
-    34
+    37,
+    36
   ],
   "diff_ms": 7,
-  "shrink_ms": 453,
-  "shrink_runs": 12,
+  "shrink_ms": 294,
+  "shrink_runs": 9,
   "shrink_answers_changed": 23,
   "shrink_answers_needed": 1,
-  "test_ms": 90,
-  "group_ms": 13,
+  "test_ms": 71,
+  "group_ms": 11,
   "groups": 2,
-  "push_ms": 18,
-  "pull_ms": 5,
+  "push_ms": 19,
+  "fork_ms": 25,
+  "pull_ms": 6,
   "live_server_requests": 23
 }
