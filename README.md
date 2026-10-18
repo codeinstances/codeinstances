@@ -221,6 +221,13 @@ codeinstances: 40 failing runs in 3 groups (212 runs passed)
    error  error: request <n> timed out after <n>ms
    call   GET https://api.example.com/v1/items?page=* -> no answer
    - failures/run-0412.instance
+   - failures/run-0413.instance
+   - failures/run-0415.instance
+   - failures/run-0416.instance
+   - failures/run-0417.instance
+   ... and 26 more (-v lists them)
+
+2. 6 runs  fp:1b77c0e9d2a4f815  2026-10-14 02:00 UTC to 2026-10-17 02:00 UTC
    ...
 ```
 
