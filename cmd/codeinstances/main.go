@@ -39,7 +39,9 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/codeinstances/codeinstances"
@@ -1107,10 +1109,11 @@ func serve(args []string, stdout, stderr io.Writer) int {
 	fs.Var(&runTrustFiles, "run-trust", "with -run: run only instances signed by a key in this file (repeatable); keep it apart from -trust")
 	runAnswers := fs.Bool("run-answers", false, "with -run: let fork requests give an answer at the step, which the program then acts on")
 	runDir := fs.String("run-dir", "", "the working directory for runs (default: a fresh empty folder for each)")
-	maxKept := fs.Int("max-kept", store.DefaultMaxKept, "with -run: the most forks the store keeps")
+	maxKept := fs.Int("max-kept", store.DefaultMaxKept, "with -run: the most forks the store holds before it stops keeping more")
 	runTimeout := fs.Duration("run-timeout", store.DefaultRunTimeout, "the time limit for each run")
 	maxRuns := fs.Int("max-runs", store.DefaultMaxRuns, "how many runs at once; more get 503")
-	signKey, signer := signFlags(fs)
+	signKey := fs.String("sign", "", "with -run: sign the forks the store keeps with this key, one of its own")
+	signer := fs.String("signer", "", "with -sign: a name to sign as, such as store")
 	fs.Usage = func() {
 		fmt.Fprintln(stderr, "usage: codeinstances serve [flags]")
 		fs.PrintDefaults()
@@ -1171,11 +1174,23 @@ func serve(args []string, stdout, stderr io.Writer) int {
 		runner = &store.Runner{Trusted: runTrusted, Answers: *runAnswers, Dir: *runDir, Timeout: *runTimeout, MaxRuns: *maxRuns,
 			MaxKept: *maxKept, SignKey: key, Signer: *signer,
 			Log: func(format string, args ...any) { fmt.Fprintf(stderr, "codeinstances: "+format+"\n", args...) }}
-	} else if *signKey != "" || *runDir != "" || len(runTrustFiles) > 0 || *runAnswers {
-		fmt.Fprintln(stderr, "codeinstances serve: -run-trust, -run-answers, -run-dir and -sign go with -run")
-		return 2
+	} else {
+		runOnly := map[string]bool{"run-trust": true, "run-answers": true, "run-dir": true, "run-timeout": true, "max-runs": true, "max-kept": true, "sign": true, "signer": true}
+		var used []string
+		fs.Visit(func(f *flag.Flag) {
+			if runOnly[f.Name] {
+				used = append(used, "-"+f.Name)
+			}
+		})
+		if len(used) > 0 {
+			fmt.Fprintf(stderr, "codeinstances serve: %s go with -run\n", strings.Join(used, ", "))
+			return 2
+		}
 	}
 	if *tokenFile != "" {
+		if fi, err := os.Stat(*tokenFile); err == nil && runtime.GOOS != "windows" && fi.Mode().Perm()&0o077 != 0 {
+			fmt.Fprintf(stderr, "codeinstances: warning: other users can read %s (mode %#o)\n", *tokenFile, fi.Mode().Perm())
+		}
 		b, err := os.ReadFile(*tokenFile)
 		if err != nil {
 			fmt.Fprintf(stderr, "codeinstances serve: -token-file: %v\n", err)
@@ -1226,16 +1241,26 @@ func serve(args []string, stdout, stderr io.Writer) int {
 		// pointing a name of its own at 127.0.0.1.
 		handler.Hosts = append([]string{"127.0.0.1", "localhost", "::1", host}, hosts...)
 	}
+	// Ctrl-C or SIGTERM stops the store, and every run with it: requests
+	// get a context that ends with the store's, so runs are cancelled and
+	// their process groups stopped before serve returns.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	writeTimeout := 2 * time.Minute
+	if runner != nil {
+		writeTimeout += *runTimeout
+	}
 	srv := &http.Server{
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       2 * time.Minute,
-		WriteTimeout:      2*time.Minute + *runTimeout,
+		WriteTimeout:      writeTimeout,
 		IdleTimeout:       2 * time.Minute,
+		BaseContext:       func(net.Listener) context.Context { return ctx },
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		<-ctx.Done()
 		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -1245,6 +1270,8 @@ func serve(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "codeinstances serve: %v\n", err)
 		return 2
 	}
+	// Serve returns as soon as shutdown starts; wait for the runs to end.
+	<-done
 	return 0
 }
 

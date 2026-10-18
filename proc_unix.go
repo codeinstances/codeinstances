@@ -6,6 +6,7 @@
 package codeinstances
 
 import (
+	"os"
 	"os/exec"
 	"syscall"
 )
@@ -15,7 +16,10 @@ import (
 func isolate(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {
-		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != syscall.ESRCH {
+			return err
+		}
+		return os.ErrProcessDone
 	}
 }
 

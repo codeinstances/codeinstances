@@ -313,3 +313,21 @@ func TestTail(t *testing.T) {
 		t.Fatalf("%q", s)
 	}
 }
+
+func TestKeptForksAtOnce(t *testing.T) {
+	f := newRunFixture(t)
+	f.srv.Runner.MaxRuns, f.srv.Runner.MaxKept = 4, 1
+	hex := strings.TrimPrefix(f.signed, "sha256:")
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			runReq(t, f.srv, "/v1/instances/"+hex+"/fork", "sesame", `{"at": 2, "keep": true}`)
+		}()
+	}
+	wg.Wait()
+	if n := f.srv.Store.Forks(); n != 1 {
+		t.Fatalf("%d forks kept, the cap is 1", n)
+	}
+}

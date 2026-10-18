@@ -429,30 +429,38 @@ Running commands on request needs care, so the rules are tight:
   signature says who kept a run; a run key says its runs are fit to run on
   this machine.
 - It runs the command each instance recorded, and nothing a request says
-  can change it. A request picks the run and, for a fork, the step, whether
-  to hand out fresh values and whether to keep the fork.
+  can change it. A request picks the run; for a replay, `strict` and
+  `ignore_stderr`; for a fork, the step, whether to hand out fresh values
+  and whether to keep the fork.
 - A fork request can give an answer at the step (`run -answer file.json`)
   only when the store was started with `-run-answers`. That answer is input
   the program acts on: a run that downloads a script and runs it would run
   whatever it was given. Turn it on only for runs you'd let anyone with the
   token feed data to.
 - The store keeps a fork only when asked (`run -keep`, or `-o` to download
-  it), up to `-max-kept` forks (1,000 by default) and `-max-size` each.
+  it), and only while it holds fewer than `-max-kept` forks (1,000 by
+  default, counting every fork in its folder, pushed ones too), each up to
+  `-max-size`: at most 64 GiB with the defaults. Files removed by hand count
+  until the store restarts.
   With `-sign key` it signs them as `-signer name`: that signature says "ran
   on this store, with these answers". The store refuses to start when that
   key is in `-trust` or `-run-trust`, and never runs a fork only its own key
   signed.
 - Runs start from a minimal environment (`PATH`, `HOME`, the locale, the
   temporary folder and the like, plus what the instance kept), not the
-  store's, in a fresh empty folder each (or `-run-dir`). On Linux the store
-  makes itself unreadable to the programs it runs, so they can't read its
+  store's, in a fresh empty folder each, so a command or argument with a
+  relative path (`./run-tests`, `python3 test.py`) needs `-run-dir`, a
+  folder every run shares and keeps changes in. On Linux the store makes
+  itself unreadable to the programs it runs, so they can't read its
   environment through `/proc`, unless it runs as root, which can read
-  anything; never run it as root. Give the token with `CODEINSTANCES_TOKEN` or
+  anything; never run it as root. That also means no core dumps of the
+  store, and debuggers can't attach to it. Give the token with `CODEINSTANCES_TOKEN` or
   `-token-file`: a `-token` shows in the process list.
 - One run at a time by default (`-max-runs`), a minute each
   (`-run-timeout`). More runs at once get 503. On Linux and macOS each run
-  has a process group of its own, and the whole group is stopped when the
-  run ends, times out or its client goes away.
+  has a process group of its own, and the group is stopped when the run
+  ends, times out or its client goes away, or the store is stopped with
+  Ctrl-C or SIGTERM.
 - The answer carries how the run ended and the last 64 KiB of each output
   stream. `run` prints them indented, so nothing the program prints reads as
   a line from codeinstances, and exits as `replay` does, or with `-at` as the
@@ -461,9 +469,11 @@ Running commands on request needs care, so the rules are tight:
 The program has to be where the store runs, at the path it was recorded
 with, as for a local replay. And the store runs signed code as the user it
 runs as: a program can read whatever that user can, the store's folder,
-token file and key file included. Give the store a user of its own, or a
-container, and keep its key and token files where the programs can't read
-them.
+token file and key file included, and change whatever it can. Give the store
+a user of its own, or a container, keep its key and token files where the
+programs can't read them, and make sure that user can't write the trust
+files, the store folder's parent or the codeinstances binary, or a run
+could plant a key that counts at the next start.
 
 ### Commands
 
@@ -774,7 +784,8 @@ Ctrl-C reaching the program while the recorder finishes.
   looks names up in DNS reaches the network from the store's machine; a
   container without a network stops that.
 - On Windows, a run that times out is stopped, but processes it started
-  aren't.
+  aren't. Anywhere, a process that leaves its group (`setsid`, a daemon)
+  isn't stopped with its run; a container is.
 - A program that isn't installed where the store runs, at the path it was
   recorded with, can't run there.
 - A run's answer comes at the end, not as the program prints, and carries

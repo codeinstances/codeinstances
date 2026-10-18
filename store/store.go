@@ -206,6 +206,19 @@ type Entry struct {
 	ForkOf string `json:"fork_of,omitempty"`
 }
 
+// Forks counts the stored instances that are forks.
+func (s *Store) Forks() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for _, ix := range s.index {
+		if ix.entry.ForkOf != "" {
+			n++
+		}
+	}
+	return n
+}
+
 // List describes every stored instance, newest first.
 func (s *Store) List() []Entry {
 	s.mu.Lock()

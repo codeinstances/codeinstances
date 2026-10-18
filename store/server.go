@@ -59,7 +59,7 @@ type Server struct {
 	// of these keys. Instances already in the folder are served as they are.
 	Trusted []codeinstances.TrustedKey
 	// Runner, when set, lets the server run the instances it keeps; see
-	// Runner. It runs only instances signed by a key in Trusted.
+	// Runner. It runs only instances signed by a key in Runner.Trusted.
 	Runner *Runner
 
 	slotsOnce sync.Once

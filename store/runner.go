@@ -42,8 +42,8 @@ const (
 // are fit to run on this machine, again, with the answers they recorded.
 // With Answers set, a token holder also chooses the answer at a fork's step,
 // which is input the program acts on (a run that downloads a script and runs
-// it would run whatever answer it was given), so give runs a user and a
-// machine of their own.
+// it would run whatever answer it was given). Runs run as the server's own
+// user, so give the server a user of its own.
 type Runner struct {
 	// Trusted are the keys whose instances the server runs. Keep them apart
 	// from the keys whose uploads it takes: signed is not the same as safe to
@@ -73,6 +73,27 @@ type Runner struct {
 
 	once  sync.Once
 	slots chan struct{}
+	// reserved counts forks being run that will be kept, so that runs at
+	// once can't keep more than MaxKept between them.
+	mu       sync.Mutex
+	reserved int
+}
+
+// reserve takes a place for a fork to keep, or says there is none.
+func (rn *Runner) reserve(st *Store) bool {
+	rn.mu.Lock()
+	defer rn.mu.Unlock()
+	if st.Forks()+rn.reserved >= rn.maxKept() {
+		return false
+	}
+	rn.reserved++
+	return true
+}
+
+func (rn *Runner) release() {
+	rn.mu.Lock()
+	rn.reserved--
+	rn.mu.Unlock()
 }
 
 func (rn *Runner) slot() chan struct{} {
@@ -183,17 +204,6 @@ func (rn *Runner) trustedRun(inst *instance.Instance) bool {
 	return false
 }
 
-// keptForks counts the forks in the store.
-func (s *Server) keptForks() int {
-	n := 0
-	for _, e := range s.Store.List() {
-		if e.ForkOf != "" {
-			n++
-		}
-	}
-	return n
-}
-
 // run handles POST /v1/instances/{ref}/{replay|fork}.
 func (s *Server) run(w http.ResponseWriter, r *http.Request, ref, kind string) {
 	rn := s.Runner
@@ -277,9 +287,14 @@ func (s *Server) run(w http.ResponseWriter, r *http.Request, ref, kind string) {
 			return
 		}
 	}
-	if forkReq.Keep && s.keptForks() >= rn.maxKept() {
-		problem(w, http.StatusInsufficientStorage, "the store keeps as many forks as it may; remove some first")
-		return
+	if forkReq.Keep {
+		// Forks in the store count, whoever made them. The count is of the
+		// store's index, which forgets removed files only at a restart.
+		if !rn.reserve(s.Store) {
+			problem(w, http.StatusInsufficientStorage, "the store holds as many forks as it may keep")
+			return
+		}
+		defer rn.release()
 	}
 
 	dir := rn.Dir
