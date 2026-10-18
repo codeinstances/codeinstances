@@ -596,3 +596,40 @@ func TestServeAndStop(t *testing.T) {
 		t.Fatalf("serve didn't stop cleanly: %v", err)
 	}
 }
+
+func TestForkCommand(t *testing.T) {
+	dir := t.TempDir()
+	parent := filepath.Join(dir, "pass.instance")
+	answersFile(t, parent, 0, "good", "good", "good")
+	answer := filepath.Join(dir, "bad.json")
+	os.WriteFile(answer, []byte(`{"status": 200, "body": "bad"}`), 0o600)
+	t.Setenv("CI_CMD_CHILD", "answers")
+
+	out := filepath.Join(dir, "fork.instance")
+	o, e, code := cli(t, "fork", "-q", "-at", "2", "-offline", "-answer", answer, "-o", out, parent)
+	if code != 1 || o != "" || !strings.Contains(e, "at call 2: 1 answered from the parent, 1 given, 0 sent, 1 not sent (offline)") || !strings.Contains(e, "codeinstances: kept "+out) {
+		t.Fatalf("%d %q %q", code, o, e)
+	}
+	o, _, _ = cli(t, "show", out)
+	for _, want := range []string{"forked    from sha256:", " at call 2\n", "answered from the parent's call 1", "answer given at the fork", "the fork is offline"} {
+		if !strings.Contains(o, want) {
+			t.Fatalf("show lacks %q:\n%s", want, o)
+		}
+	}
+	// The fork replays offline and matches itself.
+	if _, e, code := cli(t, "replay", "-q", out); code != 0 {
+		t.Fatal(e)
+	}
+	for _, args := range [][]string{
+		{"fork", parent},
+		{"fork", "-at", "9", parent},
+		{"fork", "-at", "1"},
+		{"fork", "-at", "1", "-answer", filepath.Join(dir, "missing.json"), parent},
+		{"fork", "-at", "1", "-resolve", "nohost", parent},
+		{"fork", "-at", "1", filepath.Join(dir, "missing.instance")},
+	} {
+		if _, _, code := cli(t, args...); code != 2 {
+			t.Errorf("%v: exit %d, want 2", args, code)
+		}
+	}
+}

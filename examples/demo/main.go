@@ -71,6 +71,7 @@ type report struct {
 	GroupMS     int64            `json:"group_ms"`
 	Groups      int              `json:"groups"`
 	PushMS      int64            `json:"push_ms"`
+	ForkMS      int64            `json:"fork_ms"`
 	PullMS      int64            `json:"pull_ms"`
 	ServerCalls int              `json:"live_server_requests"`
 }
@@ -570,6 +571,43 @@ func demo(cli string, replays int) (*report, error) {
 	}
 	add("report writes a bug report that says how to pull and replay the run",
 		code == 0 && strings.HasPrefix(out, "## exit 1: `the order was refused") && strings.Contains(out, "codeinstances pull -from "+storeURL), "")
+
+	// Fork the first run with the servers gone. Offline at its order call,
+	// with a 503 given as the answer: a what-if. And one past its last call:
+	// every answer from the parent, so it comes out the same.
+	orders := filepath.Join(work, "tests", "orders.instance")
+	parent, err := instance.Load(orders)
+	if err != nil {
+		return rep, err
+	}
+	step := 0
+	for _, c := range parent.Calls {
+		if strings.HasSuffix(c.Request.URL, "/order") {
+			step = c.Seq
+		}
+	}
+	answer := filepath.Join(work, "refused.json")
+	os.WriteFile(answer, []byte(`{"status": 503, "body": "{\"error\":\"try later\"}"}`), 0o600)
+	whatIf := filepath.Join(work, "what-if.instance")
+	t = time.Now()
+	out, code, err = runCLI(cli, "fork", "-q", "-offline", "-at", fmt.Sprint(step), "-answer", answer, "-o", whatIf, orders)
+	rep.ForkMS = time.Since(t).Milliseconds()
+	if err != nil {
+		return rep, err
+	}
+	f, ferr := instance.Load(whatIf)
+	add("fork with a given answer runs the what-if offline", code == 1 && ferr == nil && f.Fork != nil && f.Fork.At == step &&
+		strings.Contains(string(f.Result.Stderr.MustBytes()), "the order was refused: 503"), lastLine(out))
+	same := filepath.Join(work, "same.instance")
+	_, code, err = runCLI(cli, "fork", "-q", "-offline", "-at", fmt.Sprint(len(parent.Calls)+1), "-o", same, orders)
+	if err != nil {
+		return rep, err
+	}
+	_, diffCode, err := runCLI(cli, "diff", orders, same)
+	if err != nil {
+		return rep, err
+	}
+	add("fork past the last call answers every call from the parent and comes out the same", code == 0 && diffCode == 0, "")
 	return finish(rep), nil
 }
 

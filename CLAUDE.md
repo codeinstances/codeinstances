@@ -12,7 +12,7 @@ has the procedure and the checks to run afterwards.
 
 ## Where things stand
 
-v0.1.0 to v0.5.0 are the releases so far (all October 2026):
+v0.1.0 to v0.6.0 are the releases so far (all October 2026):
 Apache 2.0, CI on Linux and macOS plus a Windows smoke check, and automated
 releases with smoke-tested binaries for Linux, macOS and Windows. Pure Go,
 standard library only, no cgo.
@@ -39,7 +39,12 @@ and groups equal fingerprints; `show` prints a failing run's fingerprint.
 v0.5.0 adds share and store: the `store/` package (a folder of
 `<hex>.instance` files, an HTTP server with a bearer token, a client),
 `codeinstances serve`, `push`, `pull`, and `report` (`report.go`, a Markdown
-bug report); docs/ci.md is a GitHub Actions example (not run by our CI). The Go
+bug report); docs/ci.md is a GitHub Actions example (not run by our CI). v0.6.0 adds
+fork: `codeinstances fork -at N` (`fork.go`; the proxy's forking mode in
+`internal/capture`) answers the parent's calls before step N and runs live
+(or `-offline`, or with an `-answer` given at the step) from there; forks
+carry `fork` {parent, at} and calls `from_seq` / `given` (additive members).
+The Go
 `hook` package records and replays clock and random values. The open file
 format is [docs/FORMAT.md](docs/FORMAT.md) (`codeinstances/0`); change it only
 with a new format string or additive members, and keep
@@ -51,7 +56,7 @@ canonical id, atomic save), `internal/capture/` (the proxy), `internal/ca/`
 (per-run authority), `hook/`, `cmd/codeinstances/`, `examples/demo/` (the
 self-checking demo), `scripts/` (smoke check, release plan, record-tests).
 
-The README's "Limits in v0.5.0" section is the honest list of what isn't
+The README's "Limits in v0.6.0" section is the honest list of what isn't
 covered; keep it true.
 
 ## Long-range plan (agreed with the owner, October 2026)
@@ -67,7 +72,7 @@ Each phase adds one verb, ships as its own release and stands on its own:
    (done in v0.4.0).
 5. Share and store: stable IDs, shareable runnable bug reports, a simple
    self-hosted store, CI integration (done in v0.5.0).
-6. Fork an instance at a step and run on from there.
+6. Fork an instance at a step and run on from there (done in v0.6.0).
 7. Proof: signed, tamper-evident instances (AI agent accountability, audit).
 8. Run instances on demand (FaaS sense). Optional, the heaviest.
 
@@ -102,5 +107,5 @@ the site's posts, following that repo's CONTENT-PLAN.md (2.8).
 
 ## Next
 
-Phase 6 (fork an instance at a step and run on from there) is next on the
-plan but not agreed yet. Agree it with the owner before it goes here.
+Phase 7 (proof: signed, tamper-evident instances) is next on the plan but
+not agreed yet. Agree it with the owner before it goes here.

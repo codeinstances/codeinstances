@@ -14,7 +14,8 @@
 # program that isn't hooked at all is recorded against a live local server,
 # the server stopped, and the run replayed with show and verify working on
 # the file, diff telling it apart from a second run, test replaying it as a
-# regression test, group leaving passing runs out and grouping two crashes,
+# regression test, fork answering from the parent offline, group leaving
+# passing runs out and grouping two crashes,
 # and a store served, pushed to and pulled from.
 import http.server
 import json
@@ -117,6 +118,12 @@ def smoke(bin_dir, version):
         tested = run([cli, "test", file])
         require("1 of 1 tests passed" in tested.stdout, f"test: {tested.stdout}")
         print("ok   the Python run passes as a regression test")
+        forked = Path(work) / "fork.instance"
+        f = run([cli, "fork", "-q", "-offline", "-at", "2", "-o", forked, file], check=False)
+        # The second request gets a 502, which urllib raises on: exit 1.
+        require(f.returncode == 1 and "1 answered from the parent, 0 given, 0 sent, 1 not sent (offline)" in f.stderr, f"fork: {f.stderr}")
+        require(json.loads(forked.read_text(encoding="utf-8"))["fork"]["at"] == 2, "fork: no fork member")
+        print("ok   fork answers the first call from the parent and sends nothing offline")
         grouped = json.loads(run([cli, "group", "-json", file, second]).stdout)
         require(grouped["failing"] == 0 and grouped["passed"] == 2 and grouped["groups"] == [], f"group: {grouped}")
         print("ok   group counts the passing runs and groups none")

@@ -64,7 +64,26 @@ type RecordConfig struct {
 	UpstreamTLS *tls.Config
 	// KeepSecrets keeps SecretHeaders in the instance as they were.
 	KeepSecrets bool
+	// Answers, when set, makes a forking proxy: a request that matches one
+	// of these calls (by method, URL and body, each call once) gets its
+	// recorded answer instead of going out, and the call kept says where
+	// the answer came from. Other requests go out as when recording.
+	Answers []Answer
+	// Offline answers requests that match no Answer with a 502 instead of
+	// sending them, and keeps them as failed calls.
+	Offline bool
 }
+
+// Answer is a recorded call whose answer a forking proxy hands back.
+type Answer struct {
+	Call instance.Call
+	// Given marks an answer made up for the fork instead of taken from the
+	// parent instance.
+	Given bool
+}
+
+// ErrOffline is the error kept for a request a fork with Offline didn't send.
+const ErrOffline = "the fork is offline and the parent has no answer for this request, so it wasn't sent"
 
 // ReplayConfig sets up a replaying proxy.
 type ReplayConfig struct {
@@ -85,6 +104,10 @@ type Proxy struct {
 	// recording
 	transport   *http.Transport
 	keepSecrets bool
+
+	// forking
+	answers map[string][]Answer
+	offline bool
 
 	// replaying
 	recorded []instance.Call
@@ -128,6 +151,7 @@ func StartRecord(cfg RecordConfig) (*Proxy, error) {
 	p := &Proxy{
 		auth:        cfg.Authority,
 		keepSecrets: cfg.KeepSecrets,
+		offline:     cfg.Offline,
 		transport: &http.Transport{
 			// codeinstances itself reaches the world the way its own
 			// environment says, through a proxy if one is set, except for
@@ -149,6 +173,13 @@ func StartRecord(cfg RecordConfig) (*Proxy, error) {
 			TLSHandshakeTimeout:   15 * time.Second,
 			ExpectContinueTimeout: time.Second,
 		},
+	}
+	if len(cfg.Answers) > 0 {
+		p.answers = map[string][]Answer{}
+		for _, a := range cfg.Answers {
+			k := callKey(a.Call)
+			p.answers[k] = append(p.answers[k], a)
+		}
 	}
 	return p, p.listen()
 }
@@ -390,6 +421,16 @@ func (p *Proxy) exchange(w http.ResponseWriter, r *http.Request, target string) 
 		p.answer(w, r.Method, target, k)
 		return
 	}
+	if p.answers != nil || p.offline {
+		k := key(r.Method, target, body)
+		if tooLarge {
+			k = tooLargeKey(r.Method, target)
+			body = nil
+		}
+		if p.answerFork(w, r, target, body, k, at, arrived) {
+			return
+		}
+	}
 	if tooLarge {
 		// Kept as a call that failed, so a replay fails it the same way.
 		p.mu.Lock()
@@ -402,6 +443,48 @@ func (p *Proxy) exchange(w http.ResponseWriter, r *http.Request, target string) 
 		return
 	}
 	p.forward(w, r, target, body, at, arrived)
+}
+
+// answerFork serves a forking proxy's request from its answers, or turns it
+// away when the fork is offline. It returns false when the request should go
+// out as usual.
+func (p *Proxy) answerFork(w http.ResponseWriter, r *http.Request, target string, body []byte, k string, at int64, arrived time.Time) bool {
+	p.mu.Lock()
+	q := p.answers[k]
+	var a Answer
+	found := len(q) > 0
+	if found {
+		a = q[0]
+		p.answers[k] = q[1:]
+	}
+	if !found && !p.offline {
+		p.mu.Unlock()
+		return false
+	}
+	p.seq++
+	call := instance.Call{Seq: p.seq, Kind: instance.KindHTTP, AtMS: at,
+		Request: instance.Request{Method: r.Method, URL: target, Header: p.keep(passable(r.Header)), Body: instance.NewBody(body)}}
+	switch {
+	case !found:
+		call.Error = ErrOffline
+	case a.Given:
+		call.Given = true
+		call.Response, call.Error = a.Call.Response, a.Call.Error
+	default:
+		from := a.Call.Seq
+		call.FromSeq = from
+		call.Response, call.Error = a.Call.Response, a.Call.Error
+	}
+	d := time.Since(arrived).Milliseconds()
+	call.DurationMS = &d
+	p.calls = append(p.calls, call)
+	p.mu.Unlock()
+	if call.Error != "" {
+		writeError(w, call.Error)
+	} else {
+		writeResponse(w, r.Method, call.Response.Status, call.Response.Header, call.Response.Body.MustBytes())
+	}
+	return true
 }
 
 // ErrRequestTooLarge is the error kept for a request whose body was over

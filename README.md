@@ -2,7 +2,8 @@
 
 Keep a run of any program as a file, replay it, compare it with another,
 shrink a failure to what causes it, keep it as a test, group repeats of the
-same bug, and share it through a store of your own.
+same bug, share it through a store of your own, and fork it at a step to
+run on from there.
 
 Your code is versioned, reviewed and stored. Its runs are thrown away: a
 test fails in CI, the rerun passes, and the bug is gone. CodeInstances keeps
@@ -18,14 +19,15 @@ one say, and shows where they part ways and which calls got slower.
 it, `codeinstances test` replays a folder of instances as regression tests,
 `codeinstances group` puts failing runs that fail the same way together, and
 `codeinstances serve`, `push`, `pull` and `report` share runs through a
-self-hosted store and as bug reports.
+self-hosted store and as bug reports, and `codeinstances fork` takes a run up
+to a step and runs on from there, live or with an answer you give.
 
-**Status: v0.5.0, an early release.** Recording, offline replay, divergence
+**Status: v0.6.0, an early release.** Recording, offline replay, divergence
 reports, comparing two runs, shrinking a failure, instances as regression
-tests, grouping failures, a self-hosted store, bug reports, the Go hook
-package, the open format and its integrity check work and are tested on
-Linux and macOS, with the release binaries also checked on Windows. The
-limits are listed [below](#limits-in-v050). Open source under the
+tests, grouping failures, a self-hosted store, bug reports, forking a run,
+the Go hook package, the open format and its integrity check work and are
+tested on Linux and macOS, with the release binaries also checked on
+Windows. The limits are listed [below](#limits-in-v060). Open source under the
 Apache License 2.0.
 
 ## Download
@@ -311,6 +313,35 @@ POSIX shell, so pasting them runs nothing else. [docs/ci.md](docs/ci.md) shows a
 tests and, when they fail, pushes the run and puts the report in the job
 summary.
 
+### Forking a run at a step
+
+Replay runs a program against the whole recording. `fork` runs it against
+the recording up to a step, then lets it carry on:
+
+```sh
+codeinstances fork -at 5 run.instance                       # calls 1-4 as recorded, live from call 5
+codeinstances fork -at 5 -offline -answer 503.json run.instance  # what if call 5 had got a 503?
+```
+
+The requests that match the parent's calls before step 5 (by method, URL and
+body, each call once) get the parent's answers. From there on, requests go
+out to the real servers and are kept, as when recording; with `-offline`
+nothing is sent, and a request the parent has no answer for gets a 502.
+`-answer file.json` gives the request that matches the parent's call 5 a
+made-up answer instead, such as `{"status": 503, "body": "busy"}` or
+`{"error": "connection refused"}`. The parent's clock and random values come
+back in order until they run out (`-fresh-values` hands out new ones). Give
+another command after `--` to fork a changed build.
+
+The result is a new instance, `fork.instance` by default (`-o`), that names
+its parent and step, and marks each call: answered from the parent's call N,
+given at the fork, or sent. `fork` exits as the program did and says how many
+calls went each way. The fork replays, compares and shrinks like any other
+instance; `codeinstances diff run.instance fork.instance` shows what the
+step changed. Forking one past the last call (`-at` with the call count plus
+one) answers every recorded call and sends only what the program asks for
+beyond them.
+
 ### Commands
 
 | Command | What it does |
@@ -325,6 +356,7 @@ summary.
 | `push [-to url] file-or-dir...` | Upload instances to a store |
 | `pull [-from url] [-o file] id` | Download an instance by id or unique prefix |
 | `report [-url store] file` | Write a Markdown bug report for an instance |
+| `fork [flags] -at N parent [-- command]` | Run on from a step: the parent's answers before it, live (or given) from it |
 | `show [-json] file` | Describe an instance |
 | `verify file` | Check the file hasn't been changed since it was recorded (exit 1 if it has) |
 | `version [-json]` | The version, the format version and the commit it was built from |
@@ -360,6 +392,10 @@ store (repeatable). `push` and `pull` take `-to` or `-from` (default
 file it takes. `report -url` (default
 `$CODEINSTANCES_STORE`) adds the `pull` command; `-lines` sets how much output
 to show.
+
+`fork` flags: `-at N` (required); `-o` (default `fork.instance`);
+`-answer file.json`; `-offline`; `-fresh-values`; and `-resolve`,
+`-upstream-ca`, `-keep-secrets`, `-timeout` and `-q` as for `record`.
 
 `replay` flags: `-strict` requires HTTP requests in exactly the recorded order
 (by default each request gets the next recorded answer for the same method,
@@ -449,7 +485,11 @@ where the service refuses orders, and checks that `group` puts the three
 failing runs in two groups and leaves the passing one out. Last, it starts a
 store with a token on a loopback port, pushes the three failing runs, pulls
 one back by a 12-digit id prefix and compares the bytes, checks the store's
-grouping, and checks `report` says how to pull and replay the run.
+grouping, and checks `report` says how to pull and replay the run. With the
+servers gone, it forks the first run offline at its order call with a 503
+given as the answer, and checks the program reports the refused order; then
+it forks one past the last call and checks `diff` finds the fork the same as
+its parent.
 Progress goes to stderr and a JSON
 report to stdout; any failed check makes it exit 1.
 
@@ -491,7 +531,7 @@ killed
 programs and timeouts, a recorder killed with SIGKILL leaving no file, and
 Ctrl-C reaching the program while the recorder finishes.
 
-## Limits in v0.5.0
+## Limits in v0.6.0
 
 - HTTP only. WebSocket, raw TCP and other protocols aren't recorded.
 - Bodies are buffered whole, up to 64 MiB each, so a streamed response reaches
@@ -538,6 +578,11 @@ Ctrl-C reaching the program while the recorder finishes.
   over a network.
 - Nothing is scrubbed before a push or in a report beyond the redacted
   headers: changing bodies or query strings would stop the run replaying.
+- A fork answers by matching requests to the parent's calls, so a program
+  that changed what it sends before the step goes live (or offline) earlier
+  than the step. Clock and random values carry no time in the file, so a
+  fork hands back the parent's values in order rather than only those before
+  the step.
 - Replay has no time limit unless you give `-timeout`, so give one when
   replaying a run that timed out.
 - The recording proxy listens on a loopback port with no password while the
@@ -547,9 +592,8 @@ Ctrl-C reaching the program while the recorder finishes.
 ## Where it goes next
 
 CodeInstances treats each run as an object you can do things to. This release
-does seven of them: keep, replay, compare, shrink, test, group and share.
-Forking a run at a step and signed instances as proof of what ran are next
-on the plan.
+does eight of them: keep, replay, compare, shrink, test, group, share and
+fork. Signed instances, as proof of what ran, are next on the plan.
 
 ## Building and contributing
 

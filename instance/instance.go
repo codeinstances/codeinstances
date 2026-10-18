@@ -53,6 +53,17 @@ type Instance struct {
 	Result  Result    `json:"result"`
 	Calls   []Call    `json:"calls"`
 	Values  []Value   `json:"values"`
+	// Fork is set when the instance was forked from another one.
+	Fork *Fork `json:"fork,omitempty"`
+}
+
+// Fork says which instance an instance was forked from, and where.
+type Fork struct {
+	// Parent is the id of the instance forked from.
+	Parent string `json:"parent"`
+	// At is the seq of the parent's first call that wasn't answered from
+	// the parent: the calls before it were.
+	At int `json:"at"`
 }
 
 // Command is what was run.
@@ -89,9 +100,14 @@ type Call struct {
 	// DurationMS is how long the exchange took, from the request's arrival
 	// to the end of the response or the error. Recordings made before
 	// version 0.2.0 don't have it.
-	DurationMS *int64    `json:"duration_ms,omitempty"`
-	Request    Request   `json:"request"`
-	Response   *Response `json:"response,omitempty"`
+	DurationMS *int64 `json:"duration_ms,omitempty"`
+	// FromSeq, in a fork, is the seq of the parent's call whose answer this
+	// call was given. Given marks an answer made up for the fork instead.
+	// Neither is set for calls that went out.
+	FromSeq  int       `json:"from_seq,omitempty"`
+	Given    bool      `json:"given,omitempty"`
+	Request  Request   `json:"request"`
+	Response *Response `json:"response,omitempty"`
 	// Error is set when no response came back (the connection was refused,
 	// say). The program then got a 502 from codeinstances, in recording and
 	// in replay alike.
@@ -370,6 +386,7 @@ func (b *Body) check() error {
 var (
 	httpToken  = regexp.MustCompile("^[!#$%&'*+\\-.^_`|~0-9A-Za-z]+$")
 	signalName = regexp.MustCompile(`^[A-Za-z0-9 ]{1,40}$`)
+	parentID   = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 )
 
 // hasControl says whether s holds a C0 or C1 control character or DEL.
@@ -387,6 +404,11 @@ func (inst *Instance) Validate() error {
 	if len(inst.Command.Argv) == 0 || inst.Command.Argv[0] == "" {
 		return errors.New("instance has no command")
 	}
+	if f := inst.Fork; f != nil {
+		if !parentID.MatchString(f.Parent) || f.At < 1 {
+			return errors.New("fork: needs the parent's sha256 id and a step of 1 or more")
+		}
+	}
 	if inst.Result.Signal != "" && !signalName.MatchString(inst.Result.Signal) {
 		return errors.New("result: the signal isn't a signal name")
 	}
@@ -403,6 +425,9 @@ func (inst *Instance) Validate() error {
 		last = c.Seq
 		if c.Kind != KindHTTP {
 			return fmt.Errorf("call %d: unknown kind %q", c.Seq, c.Kind)
+		}
+		if c.FromSeq < 0 || c.FromSeq > 0 && c.Given {
+			return fmt.Errorf("call %d: from_seq and given don't fit together", c.Seq)
 		}
 		if c.DurationMS != nil && *c.DurationMS < 0 {
 			return fmt.Errorf("call %d: duration %d ms", c.Seq, *c.DurationMS)

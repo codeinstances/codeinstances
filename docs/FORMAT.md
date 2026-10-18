@@ -26,6 +26,7 @@ refuse a file where a member of this format is spelled in another case
 | `result` | object | How it ended and what it printed |
 | `calls` | array | Every exchange with the outside world, in arrival order |
 | `values` | array | Every clock or random value the program asked for |
+| `fork` | object, optional | Set when the instance was forked from another: `parent`, the parent's id, and `at`, the seq of the parent's first call not answered from the parent |
 
 ### command
 
@@ -61,6 +62,8 @@ Each element is one exchange. Version 0 has one kind, `"http"`.
 | `request` | object | `method`, `url`, optional `header` and `body` |
 | `response` | object | `status`, optional `header` and `body` |
 | `error` | string | Set instead of `response` when the exchange failed; see below |
+| `from_seq` | integer, optional | In a fork: the seq of the parent's call whose answer this call got |
+| `given` | boolean, optional | In a fork: the answer was made up for the fork, not taken from the parent or sent. Never set together with `from_seq` |
 
 Exactly one of `response` and `error` is present. An `error` means the
 program got a 502 from the recorder instead of the server's answer: when no
@@ -164,6 +167,8 @@ safe for older readers to ignore.
 
 - codeinstances 0.2.0 added `duration_ms` to calls. Files written before it
   don't have the member and stay valid.
+- codeinstances 0.6.0 added `fork` to instances and `from_seq` and `given`
+  to calls, for forks. Older files don't have them and stay valid.
 - codeinstances 0.5.0 refuses a `method`, `url` or `signal` that breaks the
   rules above, since tools print them to terminals and into bug reports.
   Files that codeinstances recorded always kept them.

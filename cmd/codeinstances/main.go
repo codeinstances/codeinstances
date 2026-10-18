@@ -10,6 +10,7 @@
 //	codeinstances shrink [flags] -pass passing.instance failing.instance [-- command [args...]]
 //	codeinstances test [flags] file-or-dir... [-- command [args...]]
 //	codeinstances group [flags] file-or-dir...
+//	codeinstances fork [flags] -at N parent.instance [-- command [args...]]
 //	codeinstances report [flags] file
 //	codeinstances serve [flags]
 //	codeinstances push [flags] file...
@@ -64,6 +65,9 @@ Usage:
   codeinstances group [flags] file-or-dir...
       Fingerprint failing runs and put the ones that fail the same way
       together, so repeats of one bug show as one group.
+  codeinstances fork [flags] -at N parent.instance [-- command [args...]]
+      Run the parent's program again with the parent's answers for the calls
+      before step N, and live from there on, and keep that run as a fork.
   codeinstances report [-url store] file
       Write a Markdown bug report for an instance, to paste into an issue.
   codeinstances serve [flags]
@@ -79,7 +83,7 @@ Usage:
   codeinstances version [-json]
 
 Run "codeinstances COMMAND -h" for a command's flags.
-Exit status: record exits as the program did; replay exits 0 when the run
+Exit status: record and fork exit as the program did; replay exits 0 when the run
 matched, 1 when it diverged; diff exits 0 when the runs are the same, 1 when
 they differ; shrink exits 0 when it kept an instance, 1 when the failure
 couldn't be narrowed down; test exits 0 when every test passed, 1
@@ -113,6 +117,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return group(args[1:], stdout, stderr)
 	case "report":
 		return report(args[1:], stdout, stderr)
+	case "fork":
+		return fork(args[1:], stdout, stderr)
 	case "serve":
 		return serve(args[1:], stdout, stderr)
 	case "push":
@@ -405,6 +411,9 @@ func show(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "instance  %s\n", inst.ID)
 	fmt.Fprintf(stdout, "recorded  %s by %s\n", inst.Created.Format(time.RFC3339), codeinstances.SafeText(inst.Tool))
 	fmt.Fprintf(stdout, "command   %s\n", codeinstances.SafeText(codeinstances.ShellQuote(inst.Command.Argv)))
+	if f := inst.Fork; f != nil {
+		fmt.Fprintf(stdout, "forked    from %s at call %d\n", f.Parent, f.At)
+	}
 	switch {
 	case r.TimedOut:
 		fmt.Fprintf(stdout, "ended     timed out after %d ms\n", r.DurationMS)
@@ -419,6 +428,12 @@ func show(args []string, stdout, stderr io.Writer) int {
 		took := ""
 		if c.DurationMS != nil {
 			took = fmt.Sprintf(" in %d ms", *c.DurationMS)
+		}
+		switch {
+		case c.FromSeq > 0:
+			took += fmt.Sprintf(", answered from the parent's call %d", c.FromSeq)
+		case c.Given:
+			took += ", answer given at the fork"
 		}
 		if c.Error != "" {
 			fmt.Fprintf(stdout, "  %3d  %6d ms  %s %s -> error%s: %s\n", c.Seq, c.AtMS, codeinstances.SafeText(c.Request.Method), codeinstances.SafeText(c.Request.URL), took, codeinstances.SafeText(c.Error))
@@ -1011,4 +1026,84 @@ func pull(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "codeinstances: pulled %s (%s)\n", path, codeinstances.SafeText(inst.Summary()))
 	return 0
+}
+
+func fork(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("fork", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	at := fs.Int("at", 0, "the parent's first call not to answer from the parent (required); one past the last answers them all")
+	out := fs.String("o", "fork.instance", "the instance file to write")
+	answerFile := fs.String("answer", "", "a JSON file with the answer to give at the step instead of sending it, such as {\"status\": 503, \"body\": \"busy\"}")
+	offline := fs.Bool("offline", false, "send nothing: requests the parent has no answer for get a 502")
+	fresh := fs.Bool("fresh-values", false, "hand the program new clock and random values instead of the parent's")
+	var resolve, cas list
+	fs.Var(&resolve, "resolve", "send host[:port] to another address, as host=addr[:port] (repeatable)")
+	fs.Var(&cas, "upstream-ca", "also trust this PEM file's certificates when reaching real HTTPS servers (repeatable)")
+	keep := fs.Bool("keep-secrets", false, "keep Authorization, Cookie and similar headers instead of redacting them")
+	timeout := fs.Duration("timeout", 0, "kill the program after this long (0: no limit)")
+	quiet := fs.Bool("q", false, "don't pass the program's output through")
+	fs.Usage = func() {
+		fmt.Fprintln(stderr, "usage: codeinstances fork [flags] -at N parent.instance [-- command [args...]]")
+		fs.PrintDefaults()
+	}
+	flagArgs, command := splitCommand(args)
+	if err := fs.Parse(flagArgs); err != nil {
+		return 2
+	}
+	if fs.NArg() != 1 || *at == 0 {
+		fs.Usage()
+		return 2
+	}
+	parent, err := instance.Load(fs.Arg(0))
+	if err != nil {
+		fmt.Fprintf(stderr, "codeinstances fork: %v\n", err)
+		return 2
+	}
+	opts := codeinstances.ForkOptions{At: *at, Offline: *offline, FreshValues: *fresh, Argv: command, KeepSecrets: *keep, Timeout: *timeout, Resolve: map[string]string{}}
+	if *answerFile != "" {
+		a, err := codeinstances.ReadAnswer(*answerFile)
+		if err != nil {
+			fmt.Fprintf(stderr, "codeinstances fork: -answer: %v\n", err)
+			return 2
+		}
+		opts.Answer = a
+	}
+	for _, r := range resolve {
+		host, addr, ok := strings.Cut(r, "=")
+		if !ok || host == "" || addr == "" {
+			fmt.Fprintf(stderr, "codeinstances fork: -resolve %q: want host=addr\n", r)
+			return 2
+		}
+		opts.Resolve[host] = addr
+	}
+	for _, path := range cas {
+		pem, err := os.ReadFile(path)
+		if err != nil {
+			fmt.Fprintf(stderr, "codeinstances fork: %v\n", err)
+			return 2
+		}
+		opts.UpstreamCAs = append(opts.UpstreamCAs, pem)
+	}
+	if !*quiet {
+		opts.Stdout, opts.Stderr = stdout, stderr
+	}
+	ctx, stop := interrupts()
+	defer stop()
+	f, err := codeinstances.Fork(ctx, parent, opts)
+	if err != nil {
+		fmt.Fprintf(stderr, "codeinstances fork: %v\n", err)
+		return 2
+	}
+	if err := instance.Save(*out, f); err != nil {
+		fmt.Fprintf(stderr, "codeinstances fork: %v\n", err)
+		return 2
+	}
+	sum := codeinstances.Summarize(f)
+	fmt.Fprintf(stderr, "codeinstances: forked %s at call %d: %d answered from the parent, %d given, %d sent, %d not sent (offline)\n",
+		instance.ShortID(parent.ID), *at, sum.FromParent, sum.Given, sum.Sent, sum.Offline)
+	fmt.Fprintf(stderr, "codeinstances: kept %s (%s)\n", *out, codeinstances.SafeText(f.Summary()))
+	if f.Result.ExitCode >= 0 {
+		return f.Result.ExitCode
+	}
+	return 1
 }
