@@ -664,12 +664,13 @@ func demo(cli string, replays int) (*report, error) {
 	if err != nil {
 		return rep, err
 	}
-	storeKey, err := codeinstances.ReadPrivateKey(keyBase + ".key")
+	// The store signs the forks it keeps with a key of its own.
+	storeKey, err := codeinstances.GenerateKey()
 	if err != nil {
 		return rep, err
 	}
 	signedSrv := &http.Server{Handler: &store.Server{Store: st2, Token: "demo-token", Trusted: trusted,
-		Runner: &store.Runner{SignKey: storeKey, Signer: "demo-store"}}, ReadHeaderTimeout: 10 * time.Second, ErrorLog: log.New(io.Discard, "", 0)}
+		Runner: &store.Runner{Trusted: trusted, Answers: true, SignKey: storeKey, Signer: "demo-store"}}, ReadHeaderTimeout: 10 * time.Second, ErrorLog: log.New(io.Discard, "", 0)}
 	go signedSrv.Serve(ln2)
 	defer signedSrv.Close()
 	url2 := "http://" + ln2.Addr().String()
@@ -696,7 +697,7 @@ func demo(cli string, replays int) (*report, error) {
 		}
 	}
 	t = time.Now()
-	out, code, err = runCLI(cli, "run", "-on", url2, "-token", "demo-token", "-json", "-at", fmt.Sprint(ordered), "-answer", accepted, sinst.ID)
+	out, code, err = runCLI(cli, "run", "-on", url2, "-token", "demo-token", "-json", "-keep", "-at", fmt.Sprint(ordered), "-answer", accepted, sinst.ID)
 	rep.RunForkMS = time.Since(t).Milliseconds()
 	if err != nil {
 		return rep, err

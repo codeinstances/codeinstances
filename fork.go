@@ -51,9 +51,9 @@ type ForkOptions struct {
 	Timeout     time.Duration
 	Stdout      io.Writer
 	Stderr      io.Writer
-	// BaseEnv, when not nil, is the environment the program starts from
-	// instead of this process's own, as for ReplayOptions.
+	// BaseEnv and Isolate are as for ReplayOptions.
 	BaseEnv []string
+	Isolate bool
 }
 
 // Answer is a made-up answer for a fork: a status, headers and a body, or
@@ -144,6 +144,21 @@ func Summarize(inst *instance.Instance) ForkSummary {
 	return s
 }
 
+// CheckForkStep says whether a fork of parent at step at, with an answer
+// given there or not, makes sense, as Fork checks before it runs anything.
+func CheckForkStep(parent *instance.Instance, at int, answer bool) error {
+	if at < 1 || at > len(parent.Calls)+1 {
+		return fmt.Errorf("the parent has calls 1 to %d; fork at one of them, or at %d to answer them all", len(parent.Calls), len(parent.Calls)+1)
+	}
+	if answer && at > len(parent.Calls) {
+		return errors.New("an answer replaces the parent's call at the step, and there is none there")
+	}
+	if answer && parent.Calls[at-1].Error == capture.ErrRequestTooLarge {
+		return errors.New("the parent's call at the step was never sent (its body was too large), so there is no request to answer")
+	}
+	return nil
+}
+
 // Fork runs the parent instance's program again with the parent's answers
 // for the calls before step At, and from there on runs live: requests go out
 // to the real servers and are kept, as when recording. The result is a new
@@ -154,14 +169,8 @@ func Fork(ctx context.Context, parent *instance.Instance, opts ForkOptions) (*in
 	if err := parent.Validate(); err != nil {
 		return nil, err
 	}
-	if opts.At < 1 || opts.At > len(parent.Calls)+1 {
-		return nil, fmt.Errorf("the parent has calls 1 to %d; fork at one of them, or at %d to answer them all", len(parent.Calls), len(parent.Calls)+1)
-	}
-	if opts.Answer != nil && opts.At > len(parent.Calls) {
-		return nil, errors.New("an answer replaces the parent's call at the step, and there is none there")
-	}
-	if opts.Answer != nil && parent.Calls[opts.At-1].Error == capture.ErrRequestTooLarge {
-		return nil, errors.New("the parent's call at the step was never sent (its body was too large), so there is no request to answer")
+	if err := CheckForkStep(parent, opts.At, opts.Answer != nil); err != nil {
+		return nil, err
 	}
 	var answers []capture.Answer
 	for _, c := range parent.Calls[:opts.At-1] {
@@ -213,7 +222,7 @@ func Fork(ctx context.Context, parent *instance.Instance, opts ForkOptions) (*in
 	created := time.Now().UTC()
 	res, err := run(ctx, runSpec{
 		argv: argv, dir: opts.Dir, work: work, mode: mode, proxy: proxy.URL(), caPEM: auth.CertPEM(),
-		env: parent.Command.Env, timeout: opts.Timeout, stdout: opts.Stdout, stderr: opts.Stderr, base: opts.BaseEnv,
+		env: parent.Command.Env, timeout: opts.Timeout, stdout: opts.Stdout, stderr: opts.Stderr, base: opts.BaseEnv, isolate: opts.Isolate,
 	})
 	if err != nil {
 		return nil, err

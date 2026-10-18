@@ -66,6 +66,13 @@ type Server struct {
 	uploads   chan struct{}
 }
 
+func (s *Server) maxBytes() int64 {
+	if s.MaxBytes > 0 {
+		return s.MaxBytes
+	}
+	return DefaultMaxBytes
+}
+
 func (s *Server) slots() chan struct{} {
 	s.slotsOnce.Do(func() {
 		n := s.MaxUploads

@@ -166,7 +166,7 @@ def smoke(bin_dir, version):
         require(run([cli, "verify", "-trust", str(key) + ".pub", second], check=False).returncode == 1, "verify -trust took an unsigned run")
         print("ok   keygen, sign and verify -trust")
         server = subprocess.Popen([str(cli), "serve", "-dir", str(Path(work) / "runs"), "-addr", "127.0.0.1:0", "-token", "smoke",
-                                   "-run", "-trust", str(key) + ".pub", "-run-dir", work], stderr=subprocess.PIPE, text=True)
+                                   "-run", "-run-trust", str(key) + ".pub", "-run-dir", work], stderr=subprocess.PIPE, text=True)
         try:
             line = server.stderr.readline()
             require(" at http://127.0.0.1:" in line, f"serve -run: {line}")

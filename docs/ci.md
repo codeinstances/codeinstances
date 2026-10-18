@@ -137,13 +137,18 @@ again, or tried with another answer at a step, without anyone setting the
 project up on a laptop:
 
 ```sh
-codeinstances serve -dir /srv/instances -host instances.example.com -trust ci.pub -run -run-dir /srv/checkout
+codeinstances serve -dir /srv/instances -host instances.example.com -token-file /etc/codeinstances/token \
+  -trust ci.pub -run -run-trust ci.pub -run-dir /srv/checkout
 codeinstances run 3f2a9c1e77b0                     # from anywhere with the token
 ```
 
-The store runs each instance's recorded command, offline, as the user it
-runs as, and only instances `ci.pub` signed. Give it a user of its own, and
-see the README for the rest of the rules.
+The store runs each instance's recorded command, answered from the
+recording, as the user it runs as, and only instances `ci.pub` signed. Here
+the CI key is trusted to run because CI only signs test runs; if it signs
+deploys too, give the test job a key of its own for `-run-trust`. Give the
+store a user of its own, don't add `-run-answers` unless you mean anyone
+with the token to feed the tests data, and see the README for the rest of
+the rules.
 
 ## Things to know
 

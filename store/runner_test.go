@@ -13,6 +13,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -45,6 +47,17 @@ func TestMain(m *testing.M) {
 		time.Sleep(1500 * time.Millisecond)
 		fmt.Println("slept")
 		os.Exit(0)
+	case "spawn":
+		// Starts a grandchild that would outlive the run, and waits.
+		cmd := exec.Command(os.Args[0], "-test.run=^$")
+		cmd.Env = append(os.Environ(), "STORE_TEST_CHILD=grandchild")
+		cmd.Start()
+		os.WriteFile(os.Getenv("STORE_TEST_PIDFILE"), []byte(strconv.Itoa(cmd.Process.Pid)), 0o600)
+		time.Sleep(time.Minute)
+		os.Exit(0)
+	case "grandchild":
+		time.Sleep(time.Minute)
+		os.Exit(0)
 	}
 	os.Exit(99)
 }
@@ -67,8 +80,8 @@ func newRunFixture(t *testing.T) *runFixture {
 		t.Fatal(err)
 	}
 	f := &runFixture{key: key, srv: &Server{Store: st, Token: "sesame",
-		Trusted: []codeinstances.TrustedKey{{Key: key.Public().(ed25519.PublicKey), Label: "ci"}},
-		Runner:  &Runner{Timeout: time.Minute}}}
+		Runner: &Runner{Timeout: time.Minute, Answers: true,
+			Trusted: []codeinstances.TrustedKey{{Key: key.Public().(ed25519.PublicKey), Label: "ci"}}}}}
 	record := func(child string, sign bool) string {
 		t.Setenv("STORE_TEST_CHILD", child)
 		inst, err := codeinstances.Record(context.Background(), codeinstances.RecordOptions{
@@ -126,7 +139,7 @@ func TestRunOnDemand(t *testing.T) {
 		t.Fatal("the server's environment reached the program")
 	}
 
-	w, res = runReq(t, f.srv, "/v1/instances/"+hex+"/fork", "sesame", `{"at": 1, "answer": {"status": 503, "body": "busy"}}`)
+	w, res = runReq(t, f.srv, "/v1/instances/"+hex+"/fork", "sesame", `{"at": 1, "answer": {"status": 503, "body": "busy"}, "keep": true}`)
 	if w.Code != 200 || res.ExitCode != 1 || !strings.Contains(res.Stderr, "the page said 503") || res.Summary == nil || res.Summary.Given != 1 || res.Summary.Sent != 0 {
 		t.Fatalf("fork: %d %s", w.Code, w.Body)
 	}
@@ -138,14 +151,49 @@ func TestRunOnDemand(t *testing.T) {
 	if kept.Fork == nil || kept.Fork.Parent != f.signed || kept.Fork.At != 1 || len(kept.Signatures) != 0 {
 		t.Fatalf("the kept fork: %+v", kept.Fork)
 	}
-	// With a key, the server signs the forks it keeps.
-	f.srv.Runner.SignKey, f.srv.Runner.Signer = f.key, "store"
-	_, res = runReq(t, f.srv, "/v1/instances/"+hex+"/fork", "sesame", `{"at": 2}`)
+	pdata, _, _ := f.srv.Store.Get(f.signed)
+	parent, _ := instance.Parse(pdata)
+	if kept.Command.Dir != parent.Command.Dir {
+		t.Fatalf("the fork names the store's run folder: %q", kept.Command.Dir)
+	}
+	// Without keep, nothing is kept.
+	before := len(f.srv.Store.List())
+	if _, res := runReq(t, f.srv, "/v1/instances/"+hex+"/fork", "sesame", `{"at": 2}`); res.Fork != "" || len(f.srv.Store.List()) != before {
+		t.Fatal("kept a fork nobody asked to keep")
+	}
+	// With a key of its own, the server signs the forks it keeps.
+	storeKey, _ := codeinstances.GenerateKey()
+	f.srv.Runner.SignKey, f.srv.Runner.Signer = storeKey, "store"
+	_, res = runReq(t, f.srv, "/v1/instances/"+hex+"/fork", "sesame", `{"at": 2, "keep": true}`)
 	data, _, _ = f.srv.Store.Get(res.Fork)
 	kept, _ = instance.Parse(data)
 	if res.ExitCode != 0 || len(kept.Signatures) != 1 || kept.Signatures[0].Signer != "store" || res.Summary.FromParent != 1 {
 		t.Fatalf("signed fork: %+v %+v", res, kept.Signatures)
 	}
+	// Even if its key is trusted to run, a run vouched for only by the
+	// store's own key isn't run: its answers were a token holder's choice.
+	f.srv.Runner.Trusted = append(f.srv.Runner.Trusted, codeinstances.TrustedKey{Key: storeKey.Public().(ed25519.PublicKey)})
+	if w2, _ := runReq(t, f.srv, "/v1/instances/"+strings.TrimPrefix(res.Fork, "sha256:")+"/replay", "sesame", ""); w2.Code != 403 {
+		t.Fatalf("ran a fork only the store signed: %d %s", w2.Code, w2.Body)
+	}
+	f.srv.Runner.Trusted = f.srv.Runner.Trusted[:1]
+
+	// Answers only when the store takes them.
+	f.srv.Runner.Answers = false
+	if w, _ := runReq(t, f.srv, "/v1/instances/"+hex+"/fork", "sesame", `{"at": 1, "answer": {"status": 200}}`); w.Code != 403 || !strings.Contains(w.Body.String(), "-run-answers") {
+		t.Fatalf("answer without -run-answers: %d %s", w.Code, w.Body)
+	}
+	f.srv.Runner.Answers = true
+	// The forks it keeps are capped, in number and size.
+	f.srv.Runner.MaxKept = 2
+	if w, _ := runReq(t, f.srv, "/v1/instances/"+hex+"/fork", "sesame", `{"at": 2, "keep": true}`); w.Code != 507 {
+		t.Fatalf("over the kept forks: %d", w.Code)
+	}
+	f.srv.Runner.MaxKept, f.srv.MaxBytes = 0, 100
+	if w, _ := runReq(t, f.srv, "/v1/instances/"+hex+"/fork", "sesame", `{"at": 2, "keep": true}`); w.Code != 507 {
+		t.Fatalf("a fork over the size limit: %d", w.Code)
+	}
+	f.srv.MaxBytes = 0
 
 	for name, c := range map[string]struct {
 		path, token, body, ctype string
@@ -182,9 +230,14 @@ func TestRunOnDemand(t *testing.T) {
 	if w, _ := runReq(t, off, "/v1/instances/"+hex+"/replay", "sesame", ""); w.Code != 404 {
 		t.Errorf("no runner: %d", w.Code)
 	}
-	untrusting := &Server{Store: f.srv.Store, Token: "sesame", Runner: &Runner{}}
+	untrusting := &Server{Store: f.srv.Store, Token: "sesame", Runner: &Runner{},
+		Trusted: f.srv.Runner.Trusted} // trusted for uploads isn't trusted to run
 	if w, _ := runReq(t, untrusting, "/v1/instances/"+hex+"/replay", "sesame", ""); w.Code != 403 {
-		t.Errorf("no trusted keys: %d", w.Code)
+		t.Errorf("no keys trusted to run: %d", w.Code)
+	}
+	tokenless := &Server{Store: f.srv.Store, Runner: f.srv.Runner}
+	if w, _ := runReq(t, tokenless, "/v1/instances/"+hex+"/replay", "", ""); w.Code != 403 {
+		t.Errorf("a store without a token ran: %d", w.Code)
 	}
 }
 
@@ -223,7 +276,7 @@ func TestRunClient(t *testing.T) {
 	if err != nil || !res.Matched {
 		t.Fatalf("%v %+v", err, res)
 	}
-	res, err = c.Fork(f.signed, ForkRequest{At: 1, Answer: &codeinstances.Answer{Error: "connection refused"}})
+	res, err = c.Fork(f.signed, ForkRequest{At: 1, Answer: &codeinstances.Answer{Error: "connection refused"}, Keep: true})
 	if err != nil || res.ExitCode != 1 || !strings.HasPrefix(res.Fork, "sha256:") {
 		t.Fatalf("%v %+v", err, res)
 	}
@@ -237,6 +290,13 @@ func TestRunClient(t *testing.T) {
 	defer liar.Close()
 	if _, err := (&Client{URL: liar.URL}).Replay(f.signed, ReplayRequest{}); err == nil {
 		t.Fatal("took an answer about another run")
+	}
+	odd := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(RunResult{Instance: f.signed, Kind: "fork", Fork: "sha256:\x1b[2Jnot-an-id"})
+	}))
+	defer odd.Close()
+	if _, err := (&Client{URL: odd.URL}).Fork(f.signed, ForkRequest{At: 1, Keep: true}); err == nil {
+		t.Fatal("took a fork id that isn't one")
 	}
 }
 

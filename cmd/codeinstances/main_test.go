@@ -798,7 +798,7 @@ func TestRunCommand(t *testing.T) {
 		t.Fatal(err)
 	}
 	st, _ := store.Open(filepath.Join(dir, "store"))
-	ts := httptest.NewServer(&store.Server{Store: st, Token: "sesame", Trusted: trusted, Runner: &store.Runner{}})
+	ts := httptest.NewServer(&store.Server{Store: st, Token: "sesame", Runner: &store.Runner{Trusted: trusted}})
 	defer ts.Close()
 	t.Setenv("CODEINSTANCES_STORE", ts.URL)
 	t.Setenv("CODEINSTANCES_TOKEN", "sesame")
@@ -808,7 +808,7 @@ func TestRunCommand(t *testing.T) {
 	inst, _ := instance.Load(file)
 
 	o, e, code := cli(t, "run", inst.ID)
-	if code != 0 || !strings.Contains(o, "--- stdout\nhello ") || !strings.Contains(o, "on the store: matched (exit 3") {
+	if code != 0 || !strings.Contains(o, "--- stdout\n  hello ") || !strings.Contains(o, "\ncodeinstances: replayed ") || !strings.Contains(o, "on the store: matched (exit 3") {
 		t.Fatalf("%d %s %s", code, o, e)
 	}
 	forked := filepath.Join(dir, "fork.instance")
@@ -832,9 +832,15 @@ func TestRunCommand(t *testing.T) {
 		{"run", "-at", "1", "-answer", filepath.Join(dir, "missing.json"), inst.ID},
 		{"run", "-token", "wrong", inst.ID},
 		{"run", "nothex"},
+		{"run", "-at", "1", "-strict", inst.ID},
 		{"serve", "-run"},
-		{"serve", "-run", "-trust", key + ".pub", "-run-timeout", "0"},
+		{"serve", "-run", "-trust", key + ".pub"},
+		{"serve", "-run", "-run-trust", key + ".pub", "-run-timeout", "0"},
+		{"serve", "-run", "-run-trust", key + ".pub", "-sign", key + ".key"},
+		{"serve", "-run", "-run-trust", filepath.Join(dir, "missing")},
 		{"serve", "-sign", key + ".key"},
+		{"serve", "-run-answers"},
+		{"serve", "-token-file", filepath.Join(dir, "missing")},
 	} {
 		if _, _, code := cli(t, args...); code != 2 {
 			t.Errorf("%v: exit %d, want 2", args, code)

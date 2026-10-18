@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -152,16 +153,18 @@ func (c *Client) Pull(ref string) ([]byte, *instance.Instance, error) {
 // Replay asks the store to replay an instance it keeps, by id or unique
 // prefix, and returns how the run went.
 func (c *Client) Replay(ref string, req ReplayRequest) (*RunResult, error) {
-	return c.runOn(ref, "replay", req)
+	return c.runOn(ref, "replay", req, false)
 }
 
 // Fork asks the store to fork an instance it keeps offline at a step, and
 // returns how the fork ran and the id the store keeps it under.
 func (c *Client) Fork(ref string, req ForkRequest) (*RunResult, error) {
-	return c.runOn(ref, "fork", req)
+	return c.runOn(ref, "fork", req, req.Keep)
 }
 
-func (c *Client) runOn(ref, kind string, req any) (*RunResult, error) {
+var fullID = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+
+func (c *Client) runOn(ref, kind string, req any, keep bool) (*RunResult, error) {
 	hex, err := cleanRef(ref)
 	if err != nil {
 		return nil, err
@@ -181,8 +184,8 @@ func (c *Client) runOn(ref, kind string, req any) (*RunResult, error) {
 	if !strings.HasPrefix(strings.TrimPrefix(res.Instance, "sha256:"), hex) || res.Kind != kind {
 		return nil, errors.New("the store answered about another run")
 	}
-	if kind == "fork" && !strings.HasPrefix(res.Fork, "sha256:") {
-		return nil, errors.New("the store didn't say where it kept the fork")
+	if keep && !fullID.MatchString(res.Fork) || !keep && res.Fork != "" {
+		return nil, errors.New("the store's answer doesn't say where it kept the fork, or says it kept one it wasn't asked to")
 	}
 	return &res, nil
 }

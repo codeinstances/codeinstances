@@ -61,6 +61,8 @@ type RecordOptions struct {
 	Timeout time.Duration
 	// Stdout and Stderr receive the program's output as it runs.
 	Stdout, Stderr io.Writer
+	// Isolate is as for ReplayOptions.
+	Isolate bool
 }
 
 // ReplayOptions says how to replay.
@@ -80,6 +82,10 @@ type ReplayOptions struct {
 	// instead of this process's own (see MinimalEnv). The proxy, hook and
 	// kept variables are set on top of it either way.
 	BaseEnv []string
+	// Isolate runs the program in a process group of its own and stops the
+	// whole group when the run ends, times out or is cancelled (Unix only).
+	// The program then doesn't get Ctrl-C from a terminal.
+	Isolate bool
 }
 
 // MinimalEnv is the part of this process's environment a program needs to
@@ -89,7 +95,8 @@ func MinimalEnv() []string {
 	keep := map[string]bool{"PATH": true, "HOME": true, "USER": true, "LOGNAME": true, "SHELL": true, "TMPDIR": true,
 		"LANG": true, "LC_ALL": true, "LC_CTYPE": true, "TZ": true,
 		"SYSTEMROOT": true, "WINDIR": true, "COMSPEC": true, "PATHEXT": true, "TEMP": true, "TMP": true,
-		"USERPROFILE": true, "APPDATA": true, "LOCALAPPDATA": true, "PROGRAMDATA": true, "SYSTEMDRIVE": true}
+		"USERPROFILE": true, "APPDATA": true, "LOCALAPPDATA": true, "PROGRAMDATA": true, "SYSTEMDRIVE": true,
+		"USERNAME": true, "HOMEDRIVE": true, "HOMEPATH": true, "NUMBER_OF_PROCESSORS": true, "PROCESSOR_ARCHITECTURE": true, "OS": true}
 	env := []string{}
 	for _, kv := range os.Environ() {
 		k, _, _ := strings.Cut(kv, "=")
@@ -154,7 +161,7 @@ func Record(ctx context.Context, opts RecordOptions) (*instance.Instance, error)
 	created := time.Now().UTC()
 	res, err := run(ctx, runSpec{
 		argv: opts.Argv, dir: opts.Dir, work: work, mode: "record", proxy: proxy.URL(), caPEM: auth.CertPEM(),
-		timeout: opts.Timeout, stdout: opts.Stdout, stderr: opts.Stderr,
+		timeout: opts.Timeout, stdout: opts.Stdout, stderr: opts.Stderr, isolate: opts.Isolate,
 	})
 	if err != nil {
 		return nil, err
@@ -214,7 +221,7 @@ func Replay(ctx context.Context, inst *instance.Instance, opts ReplayOptions) (*
 	}
 	res, err := run(ctx, runSpec{
 		argv: argv, dir: opts.Dir, work: work, mode: "replay", proxy: proxy.URL(), caPEM: auth.CertPEM(),
-		env: inst.Command.Env, timeout: opts.Timeout, stdout: opts.Stdout, stderr: opts.Stderr, base: opts.BaseEnv,
+		env: inst.Command.Env, timeout: opts.Timeout, stdout: opts.Stdout, stderr: opts.Stderr, base: opts.BaseEnv, isolate: opts.Isolate,
 	})
 	if err != nil {
 		return nil, err
@@ -245,7 +252,8 @@ type runSpec struct {
 	timeout        time.Duration
 	stdout, stderr io.Writer
 	// base, when not nil, replaces os.Environ() as the starting point.
-	base []string
+	base    []string
+	isolate bool
 }
 
 // proxyVars are cleared from the program's environment and set again to the
@@ -266,6 +274,10 @@ func run(ctx context.Context, s runSpec) (instance.Result, error) {
 	cmd.Dir = s.dir
 	cmd.WaitDelay = 2 * time.Second
 	cmd.Env = environment(s, caFile)
+	if s.isolate {
+		isolate(cmd)
+		defer killGroup(cmd)
+	}
 	var stdout, stderr capped
 	cmd.Stdout = tee(&stdout, s.stdout)
 	cmd.Stderr = tee(&stderr, s.stderr)

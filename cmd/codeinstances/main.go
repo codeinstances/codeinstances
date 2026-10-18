@@ -80,9 +80,9 @@ Usage:
       Upload instances to a store and print their ids and links.
   codeinstances pull [-from url] [-o file] id
       Download an instance from a store by id or unique prefix.
-  codeinstances run [-on url] [-at N [-answer file]] id
-      Have a store started with -run replay an instance it keeps, offline,
-      or fork it offline at step N, and print how the run went.
+  codeinstances run [-on url] [-at N [-answer file] [-o file]] id
+      Have a store started with -run replay an instance it keeps, or fork
+      it at step N, answered from the recording, and print how it went.
   codeinstances keygen [-o name] [-label text]
       Make a key pair for signing instances: name.key, kept secret, and
       name.pub, to give to whoever checks your runs.
@@ -1101,8 +1101,13 @@ func serve(args []string, stdout, stderr io.Writer) int {
 	fs.Var(&hosts, "host", "also answer to this host name, such as the public name of an HTTPS proxy in front of a loopback store (repeatable)")
 	var trustFiles list
 	fs.Var(&trustFiles, "trust", "take only instances signed by a key in this file, as keygen writes them (repeatable)")
-	runs := fs.Bool("run", false, "run instances on demand: replay or fork offline the ones a trusted key signed (needs -trust)")
-	runDir := fs.String("run-dir", "", "the working directory for runs (default: the one serve started in)")
+	tokenFile := fs.String("token-file", "", "read the token from this file (a -token shows in the process list)")
+	runs := fs.Bool("run", false, "run instances on demand: replay or fork offline the ones a -run-trust key signed")
+	var runTrustFiles list
+	fs.Var(&runTrustFiles, "run-trust", "with -run: run only instances signed by a key in this file (repeatable); keep it apart from -trust")
+	runAnswers := fs.Bool("run-answers", false, "with -run: let fork requests give an answer at the step, which the program then acts on")
+	runDir := fs.String("run-dir", "", "the working directory for runs (default: a fresh empty folder for each)")
+	maxKept := fs.Int("max-kept", store.DefaultMaxKept, "with -run: the most forks the store keeps")
 	runTimeout := fs.Duration("run-timeout", store.DefaultRunTimeout, "the time limit for each run")
 	maxRuns := fs.Int("max-runs", store.DefaultMaxRuns, "how many runs at once; more get 503")
 	signKey, signer := signFlags(fs)
@@ -1131,12 +1136,17 @@ func serve(args []string, stdout, stderr io.Writer) int {
 	}
 	var runner *store.Runner
 	if *runs {
-		if len(trusted) == 0 {
-			fmt.Fprintln(stderr, "codeinstances serve: -run needs -trust: the store runs only instances signed by a key you trust")
+		if len(runTrustFiles) == 0 {
+			fmt.Fprintln(stderr, "codeinstances serve: -run needs -run-trust: the store runs only instances signed by a key you trust to run on this machine")
 			return 2
 		}
-		if *runTimeout <= 0 || *maxRuns <= 0 {
-			fmt.Fprintln(stderr, "codeinstances serve: -run-timeout and -max-runs must be above 0")
+		runTrusted, err := codeinstances.ReadTrust(runTrustFiles...)
+		if err != nil {
+			fmt.Fprintf(stderr, "codeinstances serve: -run-trust: %v\n", err)
+			return 2
+		}
+		if *runTimeout <= 0 || *maxRuns <= 0 || *maxKept <= 0 {
+			fmt.Fprintln(stderr, "codeinstances serve: -run-timeout, -max-runs and -max-kept must be above 0")
 			return 2
 		}
 		key, err := loadSigningKey(*signKey)
@@ -1144,10 +1154,37 @@ func serve(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "codeinstances serve: -sign: %v\n", err)
 			return 2
 		}
-		runner = &store.Runner{Dir: *runDir, Timeout: *runTimeout, MaxRuns: *maxRuns, SignKey: key, Signer: *signer}
-	} else if *signKey != "" || *runDir != "" {
-		fmt.Fprintln(stderr, "codeinstances serve: -sign and -run-dir go with -run")
+		if key != nil {
+			for _, k := range append(append([]codeinstances.TrustedKey(nil), trusted...), runTrusted...) {
+				if k.Key.Equal(key.Public()) {
+					// Its signature means "ran here, with answers a token
+					// holder chose": trusting it would let them make trusted runs.
+					fmt.Fprintln(stderr, "codeinstances serve: the -sign key is in -trust or -run-trust; give the store a key of its own")
+					return 2
+				}
+			}
+		}
+		if err := protectSelf(); err != nil {
+			fmt.Fprintf(stderr, "codeinstances serve: %v\n", err)
+			return 2
+		}
+		runner = &store.Runner{Trusted: runTrusted, Answers: *runAnswers, Dir: *runDir, Timeout: *runTimeout, MaxRuns: *maxRuns,
+			MaxKept: *maxKept, SignKey: key, Signer: *signer,
+			Log: func(format string, args ...any) { fmt.Fprintf(stderr, "codeinstances: "+format+"\n", args...) }}
+	} else if *signKey != "" || *runDir != "" || len(runTrustFiles) > 0 || *runAnswers {
+		fmt.Fprintln(stderr, "codeinstances serve: -run-trust, -run-answers, -run-dir and -sign go with -run")
 		return 2
+	}
+	if *tokenFile != "" {
+		b, err := os.ReadFile(*tokenFile)
+		if err != nil {
+			fmt.Fprintf(stderr, "codeinstances serve: -token-file: %v\n", err)
+			return 2
+		}
+		if *token = strings.TrimSpace(string(b)); *token == "" {
+			fmt.Fprintln(stderr, "codeinstances serve: -token-file is empty")
+			return 2
+		}
 	}
 	made := false
 	if *token == "" {
@@ -1174,7 +1211,12 @@ func serve(args []string, stdout, stderr io.Writer) int {
 	}
 	handler := &store.Server{Store: st, Token: *token, OpenRead: *openRead, MaxBytes: *maxBytes, Trusted: trusted, Runner: runner}
 	if runner != nil {
-		fmt.Fprintf(stderr, "codeinstances: running signed instances on demand, %s at a time, offline, up to %s each\n", plural(*maxRuns, "run"), *runTimeout)
+		answers := "without given answers"
+		if *runAnswers {
+			answers = "with given answers"
+		}
+		fmt.Fprintf(stderr, "codeinstances: running instances %s signed on demand, %s at a time, up to %s each, %s\n",
+			plural(len(runner.Trusted), "run-trust key"), plural(*maxRuns, "run"), *runTimeout, answers)
 	}
 	if len(trusted) > 0 {
 		fmt.Fprintf(stderr, "codeinstances: taking only instances signed by %s\n", plural(len(trusted), "trusted key"))
@@ -1341,7 +1383,8 @@ func runRemote(args []string, stdout, stderr io.Writer) int {
 	fresh := fs.Bool("fresh-values", false, "with -at: hand the program new clock and random values")
 	strict := fs.Bool("strict", false, "replay: require HTTP requests in exactly the recorded order")
 	noStderr := fs.Bool("ignore-stderr", false, "replay: leave stderr out of the comparison")
-	out := fs.String("o", "", "with -at: also download the fork the store kept to this file")
+	keep := fs.Bool("keep", false, "with -at: have the store keep the fork")
+	out := fs.String("o", "", "with -at: have the store keep the fork, and download it to this file")
 	asJSON := fs.Bool("json", false, "print the store's answer as JSON")
 	fs.Usage = func() {
 		fmt.Fprintln(stderr, "usage: codeinstances run [flags] id")
@@ -1357,15 +1400,19 @@ func runRemote(args []string, stdout, stderr io.Writer) int {
 		fs.Usage()
 		return 2
 	}
-	if *at == 0 && (*answerFile != "" || *fresh || *out != "") {
-		fmt.Fprintln(stderr, "codeinstances run: -answer, -fresh-values and -o go with -at")
+	if *at == 0 && (*answerFile != "" || *fresh || *out != "" || *keep) {
+		fmt.Fprintln(stderr, "codeinstances run: -answer, -fresh-values, -keep and -o go with -at")
+		return 2
+	}
+	if *at != 0 && (*strict || *noStderr) {
+		fmt.Fprintln(stderr, "codeinstances run: -strict and -ignore-stderr go with a replay, not -at")
 		return 2
 	}
 	client.URL, client.Token = *u, *t
 	var res *store.RunResult
 	var err error
 	if *at != 0 {
-		req := store.ForkRequest{At: *at, FreshValues: *fresh}
+		req := store.ForkRequest{At: *at, FreshValues: *fresh, Keep: *keep || *out != ""}
 		if *answerFile != "" {
 			if req.Answer, err = codeinstances.ReadAnswer(*answerFile); err != nil {
 				fmt.Fprintf(stderr, "codeinstances run: -answer: %v\n", err)
@@ -1381,7 +1428,10 @@ func runRemote(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if *out != "" {
-		data, _, err := client.Pull(res.Fork)
+		data, f, err := client.Pull(res.Fork)
+		if err == nil && (f.Fork == nil || f.Fork.Parent != res.Instance || f.Fork.At != *at) {
+			err = errors.New("the store kept a fork of something else")
+		}
 		if err == nil {
 			err = instance.WriteAtomic(*out, data)
 		}
@@ -1424,9 +1474,10 @@ func printRun(w io.Writer, res *store.RunResult, out string) {
 		}
 		fmt.Fprintf(w, "--- %s\n", stream.name)
 		for _, line := range strings.Split(strings.TrimRight(stream.text, "\n"), "\n") {
-			// Keep the indent, which traces need; clean the rest.
+			// Indented, so nothing the program prints reads as a line from
+			// codeinstances; its own indent kept, which traces need.
 			rest := strings.TrimLeft(line, " \t")
-			fmt.Fprintln(w, line[:len(line)-len(rest)]+safe(rest))
+			fmt.Fprintln(w, "  "+line[:len(line)-len(rest)]+safe(rest))
 		}
 	}
 	if res.Cut {
@@ -1449,7 +1500,9 @@ func printRun(w io.Writer, res *store.RunResult, out string) {
 	}
 	fmt.Fprintf(w, "codeinstances: forked %s on the store, offline: %d answered from the parent, %d given, %d not sent; %s after %d ms\n",
 		instance.ShortID(res.Instance), sum.FromParent, sum.Given, sum.Offline, ended, res.DurationMS)
-	fmt.Fprintf(w, "codeinstances: the store keeps the fork as %s\n", res.Fork)
+	if res.Fork != "" {
+		fmt.Fprintf(w, "codeinstances: the store keeps the fork as %s\n", res.Fork)
+	}
 	if out != "" {
 		fmt.Fprintf(w, "codeinstances: downloaded it to %s\n", out)
 	}
