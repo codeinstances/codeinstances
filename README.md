@@ -333,8 +333,8 @@ the latest recording, on a 2-CPU Linux machine (details in the files):
   runs and 339 ms, and the two regression tests ran in 79 ms
   ([demo.json](test/results/demo.json)).
 - The smoke check passes on release-style binaries, including recording,
-  replaying and comparing runs of a Python program that knows nothing of
-  CodeInstances
+  replaying, comparing and testing runs of a Python program that knows
+  nothing of CodeInstances
   ([smoke.txt](test/results/smoke.txt)).
 
 The tests cover the format (round trips, the id catching edits, a published
