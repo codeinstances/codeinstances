@@ -1,0 +1,10 @@
+# The release smoke check on binaries built as the release workflow builds them
+# recorded 2026-10-18 04:51 UTC at no commit plus uncommitted changes, CodeInstances 0.1.0, go1.24.7 linux/amd64
+# Linux 6.18.44-fc-v139, Intel(R) Xeon(R) Processor @ 2.10GHz, 2 CPUs
+# command: python3 scripts/smoke.py BIN
+
+ok   codeinstances 0.1.0 (linux/amd64, commit unknown)
+ok   demo: 11 checks passed, 23 calls, 5 values
+ok   an unhooked Python program replays offline
+ok   show, verify and an edited file
+smoke check passed

@@ -1,0 +1,67 @@
+{
+  "format": "codeinstances/0",
+  "id": "sha256:8339092438dd9a66d7aa808250e00603702c76545cb83bebf5019a6981e5d9ae",
+  "created": "2026-10-18T04:48:43.514772404Z",
+  "tool": "codeinstances 0.1.0",
+  "command": {
+    "argv": [
+      "python3",
+      "-c",
+      "import urllib.request;print(urllib.request.urlopen('http://127.0.0.1:8765/status.json').read().decode().strip())"
+    ],
+    "dir": "/tmp/fmtex"
+  },
+  "result": {
+    "exit_code": 0,
+    "duration_ms": 58,
+    "stdout": {
+      "text": "{\"ok\":true}\n"
+    }
+  },
+  "calls": [
+    {
+      "seq": 1,
+      "kind": "http",
+      "at_ms": 45,
+      "request": {
+        "method": "GET",
+        "url": "http://127.0.0.1:8765/status.json",
+        "header": {
+          "Accept-Encoding": [
+            "identity"
+          ],
+          "Connection": [
+            "close"
+          ],
+          "User-Agent": [
+            "Python-urllib/3.13"
+          ]
+        }
+      },
+      "response": {
+        "status": 200,
+        "header": {
+          "Content-Length": [
+            "12"
+          ],
+          "Content-Type": [
+            "application/json"
+          ],
+          "Date": [
+            "Sun, 18 Oct 2026 04:48:43 GMT"
+          ],
+          "Last-Modified": [
+            "Sun, 18 Oct 2026 04:48:43 GMT"
+          ],
+          "Server": [
+            "SimpleHTTP/0.6 Python/3.13.16"
+          ]
+        },
+        "body": {
+          "text": "{\"ok\":true}\n"
+        }
+      }
+    }
+  ],
+  "values": []
+}

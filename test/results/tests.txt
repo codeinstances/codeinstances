@@ -1,0 +1,135 @@
+# Every test, verbose
+# recorded 2026-10-18 04:50 UTC at no commit plus uncommitted changes, CodeInstances 0.1.0, go1.24.7 linux/amd64
+# Linux 6.18.44-fc-v139, Intel(R) Xeon(R) Processor @ 2.10GHz, 2 CPUs
+# command: go test -count=1 -v ./...
+
+=== RUN   TestRecordAndReplayMatchOffline
+--- PASS: TestRecordAndReplayMatchOffline (0.10s)
+=== RUN   TestExitCodeIsRecordedAndCompared
+--- PASS: TestExitCodeIsRecordedAndCompared (0.07s)
+=== RUN   TestChangedProgramsAreCaught
+--- PASS: TestChangedProgramsAreCaught (0.09s)
+=== RUN   TestStderrComparisonCanBeSkipped
+--- PASS: TestStderrComparisonCanBeSkipped (0.04s)
+=== RUN   TestCrashesAreRecordedAndReplayed
+--- PASS: TestCrashesAreRecordedAndReplayed (0.02s)
+=== RUN   TestKilledProgramIsRecorded
+--- PASS: TestKilledProgramIsRecorded (0.04s)
+=== RUN   TestTimeoutIsRecorded
+--- PASS: TestTimeoutIsRecorded (0.61s)
+=== RUN   TestKeptEnvironmentIsSetOnReplay
+--- PASS: TestKeptEnvironmentIsSetOnReplay (0.04s)
+=== RUN   TestLargeAndBinaryOutput
+--- PASS: TestLargeAndBinaryOutput (1.21s)
+=== RUN   TestReplayAnotherCommand
+--- PASS: TestReplayAnotherCommand (0.07s)
+=== RUN   TestOutputIsPassedThrough
+--- PASS: TestOutputIsPassedThrough (0.02s)
+=== RUN   TestErrors
+--- PASS: TestErrors (0.00s)
+=== RUN   TestCompareOutput
+--- PASS: TestCompareOutput (0.00s)
+=== RUN   TestEnvironmentForTheProgram
+--- PASS: TestEnvironmentForTheProgram (0.00s)
+PASS
+ok  	github.com/codeinstances/codeinstances	2.330s
+=== RUN   TestUsageAndVersion
+--- PASS: TestUsageAndVersion (0.00s)
+=== RUN   TestRecordShowReplayVerify
+--- PASS: TestRecordShowReplayVerify (0.03s)
+=== RUN   TestBadArguments
+--- PASS: TestBadArguments (0.00s)
+=== RUN   TestRecordWithoutDoubleDash
+--- PASS: TestRecordWithoutDoubleDash (0.01s)
+=== RUN   TestKilledRecordLeavesNoFile
+--- PASS: TestKilledRecordLeavesNoFile (0.02s)
+=== RUN   TestInterruptReachesTheProgramNotTheRecorder
+--- PASS: TestInterruptReachesTheProgramNotTheRecorder (0.82s)
+=== RUN   TestQuoteArgs
+--- PASS: TestQuoteArgs (0.00s)
+PASS
+ok  	github.com/codeinstances/codeinstances/cmd/codeinstances	0.888s
+=== RUN   TestDemo
+ok   record finishes and keeps the exit code exit 0 codeinstances: kept /tmp/codeinstances-demo-427972025/demo.instance (7026c40c7bde: /tmp/TestDemo2161762306/001/codeinstances-demo -child, exit 0, 23 calls, 5 values, 69 ms)
+ok   every request reached the live servers and was kept 23 calls kept, 23 served live
+ok   hooked clock and random values were kept 5 values
+ok   secret headers are redacted Set-Cookie
+ok   the program saw HTTPS and HTTP answers 
+ok   live servers are down before replay 
+ok   3 replays offline all match the recording 
+ok   an extra request is caught request GET https://api.demo.test/quote?again=1 isn't in the recording
+ok   an unhooked clock is caught stdout line 1: recorded "started 2026-10-18T07:50:21.794875712+03:00", replayed "started 2026-10-18T07:50:22.115277483+03:00"
+ok   verify accepts the untouched file 
+ok   verify catches an edited file 
+codeinstances-demo: every check passed
+--- PASS: TestDemo (1.49s)
+PASS
+ok  	github.com/codeinstances/codeinstances/examples/demo	1.493s
+=== RUN   TestOutsideCodeinstancesTheValuesAreReal
+--- PASS: TestOutsideCodeinstancesTheValuesAreReal (0.01s)
+=== RUN   TestRecordThenReplay
+--- PASS: TestRecordThenReplay (0.03s)
+=== RUN   TestReplayRunsOutAndSaysSo
+--- PASS: TestReplayRunsOutAndSaysSo (0.00s)
+=== RUN   TestUnknownModeIsIgnored
+--- PASS: TestUnknownModeIsIgnored (0.00s)
+=== RUN   TestTransportTrustsTheRunAuthority
+2026/10/18 07:50:22 http: TLS handshake error from 127.0.0.1:32822: remote error: tls: bad certificate
+--- PASS: TestTransportTrustsTheRunAuthority (0.02s)
+=== RUN   TestIntnPanicsOnZero
+--- PASS: TestIntnPanicsOnZero (0.00s)
+PASS
+ok  	github.com/codeinstances/codeinstances/hook	0.076s
+=== RUN   TestBodyTextAndBinary
+--- PASS: TestBodyTextAndBinary (0.00s)
+=== RUN   TestSaveLoadRoundTrip
+--- PASS: TestSaveLoadRoundTrip (0.00s)
+=== RUN   TestIDIsStableAndIgnoresLayout
+--- PASS: TestIDIsStableAndIgnoresLayout (0.00s)
+=== RUN   TestVerifyCatchesEdits
+--- PASS: TestVerifyCatchesEdits (0.00s)
+=== RUN   TestParseRejectsBadFiles
+--- PASS: TestParseRejectsBadFiles (0.00s)
+=== RUN   TestValidate
+--- PASS: TestValidate (0.00s)
+=== RUN   TestSaveIsAtomic
+--- PASS: TestSaveIsAtomic (0.00s)
+=== RUN   TestSummary
+--- PASS: TestSummary (0.00s)
+=== RUN   TestDocumentedExample
+--- PASS: TestDocumentedExample (0.00s)
+PASS
+ok  	github.com/codeinstances/codeinstances/instance	0.009s
+?   	github.com/codeinstances/codeinstances/internal/buildinfo	[no test files]
+=== RUN   TestIssueAndVerify
+--- PASS: TestIssueAndVerify (0.00s)
+PASS
+ok  	github.com/codeinstances/codeinstances/internal/ca	0.005s
+=== RUN   TestRecordThenReplayHTTPAndHTTPS
+--- PASS: TestRecordThenReplayHTTPAndHTTPS (0.01s)
+=== RUN   TestSecretsAreRedactedUnlessKept
+--- PASS: TestSecretsAreRedactedUnlessKept (0.01s)
+=== RUN   TestUpstreamErrorIsRecordedAndReplayed
+--- PASS: TestUpstreamErrorIsRecordedAndReplayed (0.00s)
+=== RUN   TestReplayNotesUnknownAndMissingRequests
+--- PASS: TestReplayNotesUnknownAndMissingRequests (0.01s)
+=== RUN   TestRepeatedRequestsReplayInOrder
+--- PASS: TestRepeatedRequestsReplayInOrder (0.01s)
+=== RUN   TestConcurrentRequests
+--- PASS: TestConcurrentRequests (0.25s)
+=== RUN   TestStrictOrder
+--- PASS: TestStrictOrder (0.01s)
+=== RUN   TestLargeBodies
+--- PASS: TestLargeBodies (0.26s)
+=== RUN   TestTooLargeBodyFailsThatExchange
+--- PASS: TestTooLargeBodyFailsThatExchange (0.36s)
+=== RUN   TestNonProxyRequestIsRefused
+--- PASS: TestNonProxyRequestIsRefused (0.00s)
+=== RUN   TestCertificatesAreIssuedForTheRequestedHost
+--- PASS: TestCertificatesAreIssuedForTheRequestedHost (0.01s)
+=== RUN   TestCloseIsSafeTwiceAndRefusesLateRequests
+--- PASS: TestCloseIsSafeTwiceAndRefusesLateRequests (0.00s)
+=== RUN   TestHelpers
+--- PASS: TestHelpers (0.00s)
+PASS
+ok  	github.com/codeinstances/codeinstances/internal/capture	0.950s

@@ -1,0 +1,7 @@
+/codeinstances
+/codeinstances-demo
+*.instance
+!docs/*.instance
+coverage.out
+
+/scripts/__pycache__/

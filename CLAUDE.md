@@ -1,0 +1,76 @@
+# Notes for Claude
+
+This file says where the next session starts and what comes next. What comes
+next is decided with the owner before it goes here, and work starts only when
+the owner says go.
+
+## Releases
+
+Releases are automated. To release, raise `Version` in `codeinstances.go` and
+push to `main`; never ask the owner to publish one. [RELEASING.md](RELEASING.md)
+has the procedure and the checks to run afterwards.
+
+## Where things stand
+
+v0.1.0 is the first release (October 2026): Apache 2.0, CI on Linux and macOS
+plus a Windows smoke check, and automated releases with smoke-tested binaries
+for Linux, macOS and Windows. Pure Go, standard library only, no cgo.
+
+The idea: every run of a program is an instance, an object you can keep and do
+things to, the way an object is an instance of a class. v0.1.0 does the first
+two verbs, keep and replay: `codeinstances record` runs any program behind a
+local HTTP(S) proxy with a per-run certificate authority and keeps the run as
+an instance file; `codeinstances replay` reruns it offline against the
+recording and reports divergences; `show` and `verify` inspect files. The Go
+`hook` package records and replays clock and random values. The open file
+format is [docs/FORMAT.md](docs/FORMAT.md) (`codeinstances/0`); change it only
+with a new format string or additive members, and keep
+[docs/example.instance](docs/example.instance) valid (a test checks it).
+
+Layout: `codeinstances.go` (Record, Replay, comparison), `instance/` (format,
+canonical id, atomic save), `internal/capture/` (the proxy), `internal/ca/`
+(per-run authority), `hook/`, `cmd/codeinstances/`, `examples/demo/` (the
+self-checking demo), `scripts/` (smoke check, release plan, record-tests).
+
+The README's "Limits in v0.1.0" section is the honest list of what isn't
+covered; keep it true.
+
+## Long-range plan (agreed with the owner, October 2026)
+
+Each phase adds one verb, ships as its own release and stands on its own:
+1. Keep and replay (done in v0.1.0).
+2. Compare: diff two instances, passing against failing, with speed and cost.
+3. Shrink a failing instance to the smallest that still fails (delta
+   debugging); export instances as regression tests.
+4. Group: fingerprint failing instances so repeats collapse into one bug.
+5. Share and store: stable IDs, shareable runnable bug reports, a simple
+   self-hosted store, CI integration.
+6. Fork an instance at a step and run on from there.
+7. Proof: signed, tamper-evident instances (AI agent accountability, audit).
+8. Run instances on demand (FaaS sense). Optional, the heaviest.
+
+Each release gets a plain-language post on the site. Agents are a use case,
+never the whole identity.
+
+## Test results
+
+`sh scripts/record-tests.sh` runs every test, the race detector, the release
+plan's cases, the demo (10 replays) and the smoke check on release-style
+binaries, and writes them to `test/results/`. Every number on the site and in
+the README comes from those files; record again after any change that could
+move them. It needs Go and Python 3. In a cloud session, fetch modules with
+`GOPROXY=direct` if needed (there are none outside the standard library today).
+
+## Site
+
+CodeInstances.com is in `photozeitgeist/codeinstances.com`: the Hugo Launch
+template copied unchanged, with content and config values only. Pages: about,
+contact, quick start, download, reference. Posts: the launch, the category
+explainer, how it was tested, the name. Images are drawn into static/images.
+Every number comes from `test/results/`; when a recording changes a number,
+update the site too.
+
+## Next
+
+Nothing is decided beyond the long-range plan above. Agree the next phase with
+the owner before it goes here.

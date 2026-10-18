@@ -1,0 +1,259 @@
+name: release
+
+# Builds the CodeInstances binaries, checks each one on the kind of machine it
+# is for, and publishes them with a release.
+#
+# Releases go out on their own. When the test workflow passes on a push to
+# main and the Version in codeinstances.go has no tag yet, this workflow
+# builds the binaries from that commit, runs scripts/smoke.py on them, then
+# tags the commit vX.Y.Z and publishes the release "CodeInstances vX.Y.Z" with
+# the archives and SHA256SUMS attached. Nothing goes public unless every build
+# and check passes. scripts/release-plan.py has the rules, and RELEASING.md
+# the whole procedure.
+#
+# It also attaches binaries to a release someone publishes by hand, and it
+# can be run by hand to rebuild the binaries of an existing tag.
+
+on:
+  workflow_run:
+    workflows: [test]
+    types: [completed]
+    branches: [main]
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build again, such as v0.1.0"
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: "1.26.x"
+
+jobs:
+  plan:
+    # After the tests, only for a push to main in this repository that passed.
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.plan.outputs.tag }}
+      ref: ${{ steps.plan.outputs.ref }}
+      new: ${{ steps.plan.outputs.new }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          RUN_WORKFLOW: ${{ github.event.workflow_run.name }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          if [ ! -f scripts/release-plan.py ]; then
+            echo "::notice title=Release plan::$(git rev-parse --short HEAD) predates scripts/release-plan.py, so this run releases nothing"
+            exit 0
+          fi
+          python3 scripts/release-plan.py
+
+  # Static binaries (pure Go, no cgo), built and smoke-tested on their own
+  # architecture.
+  linux:
+    needs: plan
+    if: needs.plan.outputs.tag != ''
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.plan.outputs.ref }}
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: Build static binaries
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          mkdir pkg
+          go build -trimpath -ldflags '-s -w' -o pkg/codeinstances ./cmd/codeinstances
+          go build -trimpath -ldflags '-s -w' -o pkg/codeinstances-demo ./examples/demo
+          file pkg/*
+          file pkg/codeinstances | grep -q 'statically linked'
+      - run: python3 scripts/smoke.py pkg
+      - name: Package
+        run: |
+          cp LICENSE NOTICE THIRD_PARTY_LICENSES.md README.md pkg/
+          tar -czf codeinstances_linux_${{ matrix.arch }}.tar.gz -C pkg .
+      - uses: actions/upload-artifact@v7
+        with:
+          name: codeinstances_linux_${{ matrix.arch }}
+          path: codeinstances_linux_${{ matrix.arch }}.tar.gz
+
+  # Apple silicon is smoke-tested on the runner; the Intel build can only be
+  # checked for its architecture there.
+  macos:
+    needs: plan
+    if: needs.plan.outputs.tag != ''
+    strategy:
+      matrix:
+        include:
+          - arch: arm64
+            file: arm64
+          - arch: amd64
+            file: x86_64
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.plan.outputs.ref }}
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: Build
+        env:
+          CGO_ENABLED: "0"
+          GOARCH: ${{ matrix.arch }}
+        run: |
+          mkdir pkg
+          go build -trimpath -ldflags '-s -w' -o pkg/codeinstances ./cmd/codeinstances
+          go build -trimpath -ldflags '-s -w' -o pkg/codeinstances-demo ./examples/demo
+          file pkg/*
+          file pkg/codeinstances | grep -q '${{ matrix.file }}'
+      - if: matrix.arch == 'arm64'
+        run: python3 scripts/smoke.py pkg
+      - name: Package
+        run: |
+          cp LICENSE NOTICE THIRD_PARTY_LICENSES.md README.md pkg/
+          tar -czf codeinstances_darwin_${{ matrix.arch }}.tar.gz -C pkg .
+      - uses: actions/upload-artifact@v7
+        with:
+          name: codeinstances_darwin_${{ matrix.arch }}
+          path: codeinstances_darwin_${{ matrix.arch }}.tar.gz
+
+  # Built on Linux, then checked on a Windows runner below.
+  windows:
+    needs: plan
+    if: needs.plan.outputs.tag != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.plan.outputs.ref }}
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq zip
+      - name: Build
+        env:
+          CGO_ENABLED: "0"
+          GOOS: windows
+          GOARCH: amd64
+        run: |
+          mkdir pkg
+          go build -trimpath -ldflags '-s -w' -o pkg/codeinstances.exe ./cmd/codeinstances
+          go build -trimpath -ldflags '-s -w' -o pkg/codeinstances-demo.exe ./examples/demo
+          file pkg/*
+      - name: Package
+        run: |
+          cp LICENSE NOTICE THIRD_PARTY_LICENSES.md README.md pkg/
+          (cd pkg && zip -q ../codeinstances_windows_amd64.zip *)
+      - uses: actions/upload-artifact@v7
+        with:
+          name: codeinstances_windows_amd64
+          path: codeinstances_windows_amd64.zip
+
+  windows-check:
+    needs: [plan, windows]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.plan.outputs.ref }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: codeinstances_windows_amd64
+      - name: Run the Windows binaries
+        shell: pwsh
+        run: |
+          Expand-Archive codeinstances_windows_amd64.zip -DestinationPath bin
+          python scripts/smoke.py bin
+          if ($LASTEXITCODE -ne 0) { throw "smoke check failed" }
+
+  release:
+    needs: [plan, linux, macos, windows, windows-check]
+    # Two runs for the same tag take turns; the second finds it published.
+    concurrency:
+      group: release-${{ needs.plan.outputs.tag }}
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ needs.plan.outputs.tag }}
+      REF: ${{ needs.plan.outputs.ref }}
+      NEW: ${{ needs.plan.outputs.new }}
+      GH_TOKEN: ${{ github.token }}
+      FILES: >-
+        codeinstances_linux_amd64.tar.gz codeinstances_linux_arm64.tar.gz
+        codeinstances_darwin_arm64.tar.gz codeinstances_darwin_amd64.tar.gz
+        codeinstances_windows_amd64.zip SHA256SUMS
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: codeinstances_*
+          path: dist
+          merge-multiple: true
+      - name: Checksums and notes
+        run: |
+          cd dist
+          sha256sum codeinstances_* > SHA256SUMS
+          cat SHA256SUMS
+          cat > ../notes.md <<'NOTES'
+          Ready-built CodeInstances binaries. Each archive holds two commands with the license files and README:
+
+          - `codeinstances`: `record` a run of any program as an instance file, `replay` it offline and see whether it came out the same, `show` and `verify` instance files
+          - `codeinstances-demo`: the self-checking demo, which records a program over HTTPS and HTTP, stops the servers, replays it and catches changes
+
+          | System | File |
+          |---|---|
+          | Linux, x86-64 (static) | codeinstances_linux_amd64.tar.gz |
+          | Linux, ARM64 (static) | codeinstances_linux_arm64.tar.gz |
+          | macOS, Apple silicon | codeinstances_darwin_arm64.tar.gz |
+          | macOS, Intel | codeinstances_darwin_amd64.tar.gz |
+          | Windows, x86-64 | codeinstances_windows_amd64.zip |
+
+          SHA256SUMS lists the checksums. The macOS binaries aren't signed by Apple, so macOS may ask you to allow them the first time, or you can run `xattr -d com.apple.quarantine codeinstances codeinstances-demo`. To hook a Go program's clock and random numbers: `go get github.com/codeinstances/codeinstances@latest`.
+          NOTES
+      - name: Tag the commit and publish the release, binaries attached
+        if: env.NEW == 'true'
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "$TAG is out already."
+            exit 0
+          fi
+          cd dist
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$REF" \
+            --title "CodeInstances $TAG" --notes-file ../notes.md $FILES
+      - name: Attach the binaries to an existing release
+        if: env.NEW != 'true'
+        run: |
+          cd dist
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber $FILES
+          body=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body)
+          if [ -z "$body" ]; then
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file ../notes.md
+          fi

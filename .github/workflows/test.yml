@@ -1,0 +1,78 @@
+name: test
+
+# Every push to main and every pull request: formatting, vet, the full test
+# suite (programs recorded over HTTPS and HTTP and replayed with the servers
+# gone, changed programs caught, edited files caught, a recorder killed
+# mid-run) on Linux and macOS, the race detector on Linux, the release plan's
+# cases, and the smoke check on Windows binaries on a Windows runner. A
+# passing run on main starts the release workflow, which releases a raised
+# version.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.26.x"
+      - run: test -z "$(gofmt -l .)"
+      - run: go vet ./...
+      - run: go test -count=1 ./...
+      - if: runner.os == 'Linux'
+        run: go test -race -count=1 ./...
+      - run: go build ./...
+      - run: python3 -B -m unittest discover -s scripts -p '*_test.py'
+
+  # The Windows binaries, built as the release builds them, run the smoke
+  # check on a Windows runner on every push and pull request, so a Windows
+  # problem shows here rather than first in a release.
+  windows-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.26.x"
+      - name: Build
+        env:
+          CGO_ENABLED: "0"
+          GOOS: windows
+          GOARCH: amd64
+        run: |
+          go vet ./...
+          mkdir bin
+          go build -trimpath -ldflags '-s -w' -o bin/codeinstances.exe ./cmd/codeinstances
+          go build -trimpath -ldflags '-s -w' -o bin/codeinstances-demo.exe ./examples/demo
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-test-binaries
+          path: bin
+          retention-days: 3
+
+  windows-smoke:
+    needs: windows-build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: windows-test-binaries
+          path: bin
+      - name: Smoke check
+        shell: pwsh
+        run: |
+          python scripts/smoke.py bin
+          if ($LASTEXITCODE -ne 0) { throw "smoke check failed" }
