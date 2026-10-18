@@ -9,6 +9,7 @@
 //	codeinstances diff [flags] a.instance b.instance
 //	codeinstances shrink [flags] -pass passing.instance failing.instance [-- command [args...]]
 //	codeinstances test [flags] file-or-dir... [-- command [args...]]
+//	codeinstances group [flags] file-or-dir...
 //	codeinstances show [-json] file
 //	codeinstances verify file
 //	codeinstances version [-json]
@@ -51,6 +52,9 @@ Usage:
   codeinstances test [flags] file-or-dir... [-- command [args...]]
       Replay instances as regression tests: a run that passed must replay
       exactly, and a run that failed must now exit 0.
+  codeinstances group [flags] file-or-dir...
+      Fingerprint failing runs and put the ones that fail the same way
+      together, so repeats of one bug show as one group.
   codeinstances show [-json] file
       Describe an instance.
   codeinstances verify file
@@ -62,7 +66,8 @@ Exit status: record exits as the program did; replay exits 0 when the run
 matched, 1 when it diverged; diff exits 0 when the runs are the same, 1 when
 they differ; shrink exits 0 when it kept an instance, 1 when the failure
 couldn't be narrowed down; test exits 0 when every test passed, 1
-when any failed; any command exits 2 on a usage or file error.
+when any failed; group exits 0; any command exits 2 on a usage or file
+error.
 `
 
 func main() {
@@ -85,6 +90,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return shrink(args[1:], stdout, stderr)
 	case "test":
 		return test(args[1:], stdout, stderr)
+	case "group":
+		return group(args[1:], stdout, stderr)
 	case "show":
 		return show(args[1:], stdout, stderr)
 	case "verify":
@@ -397,6 +404,10 @@ func show(args []string, stdout, stderr io.Writer) int {
 		counts[v.Kind]++
 	}
 	fmt.Fprintf(stdout, "values    %d (clock %d, random %d, bytes %d)\n", len(inst.Values), counts[instance.ValueClock], counts[instance.ValueRandom], counts[instance.ValueBytes])
+	if codeinstances.Failed(inst) {
+		fp := codeinstances.FingerprintOf(inst)
+		fmt.Fprintf(stdout, "failure   %s  %s\n", fp.ID, fp.Summary())
+	}
 	return 0
 }
 
@@ -682,4 +693,85 @@ func instanceFiles(paths []string) ([]string, error) {
 		}
 	}
 	return files, nil
+}
+
+func group(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("group", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	asJSON := fs.Bool("json", false, "print the groups as JSON")
+	all := fs.Bool("v", false, "list every run in each group, not only the first 5")
+	fs.Usage = func() {
+		fmt.Fprintln(stderr, "usage: codeinstances group [flags] file-or-dir...")
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() == 0 {
+		fs.Usage()
+		return 2
+	}
+	files, err := instanceFiles(fs.Args())
+	if err != nil {
+		fmt.Fprintf(stderr, "codeinstances group: %v\n", err)
+		return 2
+	}
+	if len(files) == 0 {
+		fmt.Fprintln(stderr, "codeinstances group: no .instance files found")
+		return 2
+	}
+	var runs []codeinstances.NamedInstance
+	for _, f := range files {
+		inst, err := instance.Load(f)
+		if err != nil {
+			fmt.Fprintf(stderr, "codeinstances group: %v\n", err)
+			return 2
+		}
+		runs = append(runs, codeinstances.NamedInstance{Name: f, Instance: inst})
+	}
+	g := codeinstances.GroupFailures(runs)
+	if *asJSON {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		enc.Encode(g)
+		return 0
+	}
+	fmt.Fprintf(stdout, "codeinstances: %s in %s (%s passed)\n", plural(g.Failing, "failing run"), plural(len(g.Groups), "group"), plural(g.Passed, "run"))
+	for i, grp := range g.Groups {
+		fp := grp.Fingerprint
+		when := grp.First.UTC().Format("2006-01-02 15:04 UTC")
+		if !grp.Last.Equal(grp.First) {
+			when += " to " + grp.Last.UTC().Format("2006-01-02 15:04 UTC")
+		}
+		fmt.Fprintf(stdout, "\n%d. %s  %s  %s\n", i+1, plural(len(grp.Runs), "run"), fp.ID, when)
+		fmt.Fprintf(stdout, "   ended  %s\n", fp.Ended)
+		for j, l := range strings.Split(fp.Error, "\n") {
+			if l == "" {
+				continue
+			}
+			label := "error "
+			if j > 0 {
+				label = "      "
+			}
+			fmt.Fprintf(stdout, "   %s %s\n", label, l)
+		}
+		for _, c := range fp.Calls {
+			fmt.Fprintf(stdout, "   call   %s\n", c)
+		}
+		for j, r := range grp.Runs {
+			if j == 5 && !*all {
+				fmt.Fprintf(stdout, "   ... and %d more (-v lists them)\n", len(grp.Runs)-5)
+				break
+			}
+			fmt.Fprintf(stdout, "   - %s\n", r)
+		}
+	}
+	return 0
+}
+
+func plural(n int, what string) string {
+	if n == 1 {
+		return "1 " + what
+	}
+	return fmt.Sprintf("%d %ss", n, what)
 }

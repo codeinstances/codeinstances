@@ -67,6 +67,8 @@ type report struct {
 	Changed     int              `json:"shrink_answers_changed"`
 	Needed      int              `json:"shrink_answers_needed"`
 	TestMS      int64            `json:"test_ms"`
+	GroupMS     int64            `json:"group_ms"`
+	Groups      int              `json:"groups"`
 	ServerCalls int              `json:"live_server_requests"`
 }
 
@@ -126,6 +128,10 @@ func runChild(extra, unhooked, tolerant bool) int {
 	b, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	fmt.Println("order", resp.StatusCode, string(b))
+	if resp.StatusCode != http.StatusCreated && !tolerant {
+		fmt.Fprintf(os.Stderr, "the order was refused: %d\n", resp.StatusCode)
+		return 1
+	}
 
 	status, err := get(client, "http://"+plainHost+"/status")
 	if err != nil {
@@ -184,6 +190,7 @@ type servers struct {
 	mu     sync.Mutex
 	count  int
 	broken bool // item 7 fails, as a bug in the service would make it
+	refuse bool // orders are refused, a second bug
 	ln     []net.Listener
 	srv    []*http.Server
 }
@@ -192,12 +199,15 @@ func (s *servers) handler(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	s.count++
 	n := s.count
-	broken := s.broken
+	broken, refuse := s.broken, s.refuse
 	s.mu.Unlock()
 	stamp := time.Now().UnixNano()
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Set-Cookie", fmt.Sprintf("session=%d", stamp))
 	switch {
+	case refuse && r.URL.Path == "/order":
+		w.WriteHeader(http.StatusServiceUnavailable)
+		fmt.Fprintf(w, `{"error":"try later","at":%d}`, stamp)
 	case r.URL.Path == "/order" && r.Method == http.MethodPost:
 		b, _ := io.ReadAll(r.Body)
 		w.WriteHeader(http.StatusCreated)
@@ -344,6 +354,27 @@ func demo(cli string, replays int) (*report, error) {
 	}
 	add("a failing run is recorded", code == 1, fmt.Sprintf("exit %d", code))
 
+	// Two more failing runs: the same bug again, then the item fixed and a
+	// second bug, orders refused.
+	again := filepath.Join(work, "failing-again.instance")
+	refused := filepath.Join(work, "refused.instance")
+	codes := []int{}
+	for _, f := range []string{again, refused} {
+		if f == refused {
+			srv.mu.Lock()
+			srv.broken, srv.refuse = false, true
+			srv.mu.Unlock()
+		}
+		_, code, err = runCLI(cli, "record", "-q", "-o", f,
+			"-resolve", secureHost+"="+secureAddr, "-resolve", plainHost+"="+plainAddr,
+			"-upstream-ca", caFile, "--", self, "-child")
+		if err != nil {
+			return rep, err
+		}
+		codes = append(codes, code)
+	}
+	add("two more failing runs are recorded", codes[0] == 1 && codes[1] == 1, fmt.Sprintf("exits %v", codes))
+
 	// From here on nothing is listening.
 	srv.stop()
 	if c, err := net.DialTimeout("tcp", secureAddr, time.Second); err == nil {
@@ -467,6 +498,27 @@ func demo(cli string, replays int) (*report, error) {
 		return rep, err
 	}
 	add("test passes the fixed build", code == 0 && strings.Contains(out, "2 of 2 tests passed"), lastLine(out))
+
+	// Group the three failing runs and a passing one: the two runs with the
+	// item 7 bug are one group, the refused order another.
+	t = time.Now()
+	out, code, err = runCLI(cli, "group", "-json", failing, again, refused, second)
+	rep.GroupMS = time.Since(t).Milliseconds()
+	if err != nil {
+		return rep, err
+	}
+	var grp struct {
+		Groups []struct {
+			Runs []string `json:"runs"`
+		} `json:"groups"`
+		Failing int `json:"failing"`
+		Passed  int `json:"passed"`
+	}
+	json.Unmarshal([]byte(out), &grp)
+	rep.Groups = len(grp.Groups)
+	add("group puts repeats of one bug together", code == 0 && grp.Failing == 3 && grp.Passed == 1 && len(grp.Groups) == 2 &&
+		len(grp.Groups[0].Runs) == 2 && grp.Groups[1].Runs[0] == refused,
+		fmt.Sprintf("%d failing runs in %d groups", grp.Failing, len(grp.Groups)))
 	return finish(rep), nil
 }
 

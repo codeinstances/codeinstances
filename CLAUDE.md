@@ -12,7 +12,7 @@ has the procedure and the checks to run afterwards.
 
 ## Where things stand
 
-v0.1.0, v0.2.0 and v0.3.0 are the releases so far (all October 2026):
+v0.1.0 to v0.4.0 are the releases so far (all October 2026):
 Apache 2.0, CI on Linux and macOS plus a Windows smoke check, and automated
 releases with smoke-tested binaries for Linux, macOS and Windows. Pure Go,
 standard library only, no cgo.
@@ -32,7 +32,10 @@ shrink and test: `codeinstances shrink -pass a b` (`shrink.go`) finds by delta
 debugging the fewest of the failing run's answers that keep the failure,
 swapping in the passing run's answers, and writes that instance;
 `codeinstances test` (`regression.go`) replays instances as regression tests
-(recorded exit 0 must match, a recorded failure must now exit 0). The Go
+(recorded exit 0 must match, a recorded failure must now exit 0). v0.4.0
+adds group: `codeinstances group` (`group.go`) fingerprints failing runs
+(ended, normalised error line or Go panic / Python traceback, failed calls)
+and groups equal fingerprints; `show` prints a failing run's fingerprint. The Go
 `hook` package records and replays clock and random values. The open file
 format is [docs/FORMAT.md](docs/FORMAT.md) (`codeinstances/0`); change it only
 with a new format string or additive members, and keep
@@ -43,7 +46,7 @@ canonical id, atomic save), `internal/capture/` (the proxy), `internal/ca/`
 (per-run authority), `hook/`, `cmd/codeinstances/`, `examples/demo/` (the
 self-checking demo), `scripts/` (smoke check, release plan, record-tests).
 
-The README's "Limits in v0.3.0" section is the honest list of what isn't
+The README's "Limits in v0.4.0" section is the honest list of what isn't
 covered; keep it true.
 
 ## Long-range plan (agreed with the owner, October 2026)
@@ -55,7 +58,8 @@ Each phase adds one verb, ships as its own release and stands on its own:
 3. Shrink a failing instance to the smallest that still fails (delta
    debugging); export instances as regression tests (done in v0.3.0, shrink
    against a passing run).
-4. Group: fingerprint failing instances so repeats collapse into one bug.
+4. Group: fingerprint failing instances so repeats collapse into one bug
+   (done in v0.4.0).
 5. Share and store: stable IDs, shareable runnable bug reports, a simple
    self-hosted store, CI integration.
 6. Fork an instance at a step and run on from there.
@@ -93,6 +97,6 @@ the site's posts, following that repo's CONTENT-PLAN.md (2.8).
 
 ## Next
 
-Phase 4 (group: fingerprint failing instances so repeats collapse into one
-bug) is next on the plan but not agreed yet. Agree it with the owner before it
-goes here.
+Phase 5 (share and store: stable IDs, shareable runnable bug reports, a
+simple self-hosted store, CI integration) is next on the plan but not agreed
+yet. Agree it with the owner before it goes here.

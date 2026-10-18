@@ -1,7 +1,8 @@
 # CodeInstances
 
 Keep a run of any program as a file, replay it, compare it with another,
-shrink a failure to what causes it, and keep it as a test.
+shrink a failure to what causes it, keep it as a test, and group repeats of
+the same bug.
 
 Your code is versioned, reviewed and stored. Its runs are thrown away: a
 test fails in CI, the rerun passes, and the bug is gone. CodeInstances keeps
@@ -14,14 +15,15 @@ replaced by the recording and tells you whether it came out the same.
 `codeinstances diff` puts two runs side by side, a passing one and a failing
 one say, and shows where they part ways and which calls got slower.
 `codeinstances shrink` narrows a failure down to the few answers that cause
-it, and `codeinstances test` replays a folder of instances as regression
-tests.
+it, `codeinstances test` replays a folder of instances as regression tests,
+and `codeinstances group` puts failing runs that fail the same way together.
 
-**Status: v0.3.0, an early release.** Recording, offline replay, divergence
+**Status: v0.4.0, an early release.** Recording, offline replay, divergence
 reports, comparing two runs, shrinking a failure, instances as regression
-tests, the Go hook package, the open format and its integrity check work and
-are tested on Linux and macOS, with the release binaries also checked on
-Windows. The limits are listed [below](#limits-in-v030). Open source under the
+tests, grouping failures, the Go hook package, the open format and its
+integrity check work and are tested on Linux and macOS, with the release
+binaries also checked on Windows. The limits are listed
+[below](#limits-in-v040). Open source under the
 Apache License 2.0.
 
 ## Download
@@ -202,6 +204,40 @@ A shrunk failure makes a good test: it holds only what the bug needs. A
 failure found with `-match` that exits 0 is kept with exit 0, so test it with
 `-expect pass`; `shrink` reminds you.
 
+### Grouping failures
+
+A nightly job that fails 40 times over a week is rarely 40 bugs. `group`
+says how many it is:
+
+```sh
+codeinstances group failures/
+```
+
+```
+codeinstances: 40 failing runs in 3 groups (212 runs passed)
+
+1. 31 runs  fp:6d1f0a93be27c4e1  2026-10-12 02:00 UTC to 2026-10-18 02:00 UTC
+   ended  exit 1
+   error  error: request <n> timed out after <n>ms
+   call   GET https://api.example.com/v1/items?page=* -> no answer
+   - failures/run-0412.instance
+   ...
+```
+
+Each failing run (one that didn't exit 0) gets a fingerprint made of three
+parts: how it ended; its error, which is a Go panic's message with the first
+three functions on its stack, a Python exception with the last three frames
+of its traceback, or else the last line it printed on stderr (on stdout when
+stderr is empty); and the calls that got no answer or a 5xx status, by
+method and URL. Before hashing, the details that change between repeats are
+blanked out: times, UUIDs, hex ids with at least 8 characters, numbers, and
+the values of query parameters. Runs with the same fingerprint are one group,
+biggest group first. Runs that passed are counted and left out. `show` prints
+a failing run's fingerprint too.
+
+`group` takes files and folders like `test`; `-v` lists every run in a group
+and `-json` prints the groups as JSON. It exits 0 whatever it finds.
+
 ### Commands
 
 | Command | What it does |
@@ -211,6 +247,7 @@ failure found with `-match` that exits 0 is kept with exit 0, so test it with
 | `diff [flags] a b` | Compare two instances: how they ended, their output, calls, values and speed |
 | `shrink [flags] -pass passing failing [-- command]` | Find the fewest failing answers that keep the failure, and keep that instance |
 | `test [flags] file-or-dir... [-- command]` | Replay instances as regression tests |
+| `group [flags] file-or-dir...` | Fingerprint failing runs and group the ones that fail the same way |
 | `show [-json] file` | Describe an instance |
 | `verify file` | Check the file hasn't been changed since it was recorded (exit 1 if it has) |
 | `version [-json]` | The version, the format version and the commit it was built from |
@@ -233,6 +270,8 @@ as JSON.
 `test` flags: `-expect auto|match|pass`; `-ignore-stderr`; `-timeout` per
 test (a minute by default); `-v` lists the notes of passing tests too;
 `-json` prints the results as JSON.
+
+`group` flags: `-v` lists every run of each group; `-json`.
 
 `replay` flags: `-strict` requires HTTP requests in exactly the recorded order
 (by default each request gets the next recorded answer for the same method,
@@ -316,7 +355,10 @@ call the two runs share. It records a third run while the HTTPS server is
 breaking item 7, and checks that `shrink`, against the first run, needs only
 that one answer of all the ones that differ. Last, it puts the first run and
 the shrunk failure in a folder and checks that `test` fails the program as it
-is and passes a fixed build that carries on when an item can't be read.
+is and passes a fixed build that carries on when an item can't be read. It
+records two more failing runs, the item 7 bug again and then a second bug
+where the service refuses orders, and checks that `group` puts the three
+failing runs in two groups and leaves the passing one out.
 Progress goes to stderr and a JSON
 report to stdout; any failed check makes it exit 1.
 
@@ -347,11 +389,13 @@ a missing request, an extra random value, an unhooked clock), comparing runs
 (call pairing, changed request bodies, JSON paths, line and byte differences,
 value counts, notes that don't count, speed order), shrinking (two answers
 out of five found, refusals, the run limit, the shrunk file failing on
-replay), regression tests (match and pass, a fixed build), crashes, killed
+replay), regression tests (match and pass, a fixed build), fingerprints
+(normalising, Go panics, Python tracebacks, failed calls, grouping), crashes,
+killed
 programs and timeouts, a recorder killed with SIGKILL leaving no file, and
 Ctrl-C reaching the program while the recorder finishes.
 
-## Limits in v0.3.0
+## Limits in v0.4.0
 
 - HTTP only. WebSocket, raw TCP and other protocols aren't recorded.
 - Bodies are buffered whole, up to 64 MiB each, so a streamed response reaches
@@ -383,6 +427,10 @@ Ctrl-C reaching the program while the recorder finishes.
   requests, or change headers or hooked values.
 - `shrink` assumes the program fails the same way every time it gets the same
   answers. One that fails at random can mislead it.
+- A fingerprint is a heuristic. Two bugs that end the same way, print the
+  same last line and fail the same calls share one; one bug whose message
+  carries a word that changes (a file name, say) splits into several groups.
+  Stack traces other than Go panics and Python tracebacks aren't read.
 - Replay has no time limit unless you give `-timeout`, so give one when
   replaying a run that timed out.
 - The recording proxy listens on a loopback port with no password while the
@@ -392,9 +440,9 @@ Ctrl-C reaching the program while the recorder finishes.
 ## Where it goes next
 
 CodeInstances treats each run as an object you can do things to. This release
-does five of them: keep, replay, compare, shrink and test. Grouping repeated
-failures, sharing and storing instances, forking a run at a step, and signed
-instances as proof of what ran are on the plan, in that rough order.
+does six of them: keep, replay, compare, shrink, test and group. Sharing and
+storing instances, forking a run at a step, and signed instances as proof of
+what ran are on the plan, in that rough order.
 
 ## Building and contributing
 

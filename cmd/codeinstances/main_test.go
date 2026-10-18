@@ -424,3 +424,53 @@ func TestShrinkAndTest(t *testing.T) {
 		}
 	}
 }
+
+func TestGroup(t *testing.T) {
+	dir := t.TempDir()
+	save := func(name string, exit int, stderr string, at time.Time) {
+		inst := &instance.Instance{Tool: "test", Created: at, Command: instance.Command{Argv: []string{"prog"}},
+			Result: instance.Result{ExitCode: exit, Stderr: instance.NewBody([]byte(stderr))}}
+		if err := instance.Save(filepath.Join(dir, name), inst); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t0 := time.Date(2026, 10, 18, 6, 0, 0, 0, time.UTC)
+	for i := 0; i < 7; i++ {
+		save(fmt.Sprintf("timeout-%d.instance", i), 1, fmt.Sprintf("request %d timed out after %dms\n", 100+i, 3000+i), t0.Add(time.Duration(i)*time.Minute))
+	}
+	save("other.instance", 2, "panic: nil map\n\ngoroutine 1 [running]:\nmain.main()\n\t/app/main.go:9 +0x1\n", t0)
+	save("fine.instance", 0, "", t0)
+
+	o, _, code := cli(t, "group", dir)
+	for _, want := range []string{
+		"codeinstances: 8 failing runs in 2 groups (1 run passed)",
+		"1. 7 runs  fp:", "2026-10-18 06:00 UTC to 2026-10-18 06:06 UTC",
+		"   ended  exit 1\n   error  request <n> timed out after <n>ms\n",
+		"... and 2 more (-v lists them)",
+		"2. 1 run  fp:", "   error  panic: nil map\n          at main.main\n",
+	} {
+		if code != 0 || !strings.Contains(o, want) {
+			t.Fatalf("lacks %q (exit %d):\n%s", want, code, o)
+		}
+	}
+	if o, _, _ := cli(t, "group", "-v", dir); !strings.Contains(o, "timeout-6.instance") {
+		t.Fatal(o)
+	}
+	o, _, code = cli(t, "group", "-json", dir)
+	var g codeinstances.Grouping
+	if code != 0 || json.Unmarshal([]byte(o), &g) != nil || g.Failing != 8 || g.Passed != 1 || len(g.Groups[0].Runs) != 7 {
+		t.Fatalf("%d %s", code, o)
+	}
+	o, _, _ = cli(t, "show", filepath.Join(dir, "other.instance"))
+	if !strings.Contains(o, "failure   fp:") || !strings.Contains(o, "exit 2 | panic: nil map / at main.main") {
+		t.Fatal(o)
+	}
+	if o, _, _ := cli(t, "show", filepath.Join(dir, "fine.instance")); strings.Contains(o, "failure") {
+		t.Fatal(o)
+	}
+	for _, args := range [][]string{{"group"}, {"group", filepath.Join(dir, "none")}, {"group", t.TempDir()}, {"group", "-x", dir}} {
+		if _, _, code := cli(t, args...); code != 2 {
+			t.Errorf("%v: exit %d, want 2", args, code)
+		}
+	}
+}
