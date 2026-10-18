@@ -251,6 +251,19 @@ func (p *Proxy) Served() int {
 	return p.served
 }
 
+// Used returns the seq numbers of the recorded calls a replay answered.
+func (p *Proxy) Used() []int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	out := []int{}
+	for i, used := range p.used {
+		if used {
+			out = append(out, p.recorded[i].Seq)
+		}
+	}
+	return out
+}
+
 // Divergences lists how a replay's traffic differed from the recording:
 // requests with no recorded answer, and recorded requests never made.
 func (p *Proxy) Divergences() []string {

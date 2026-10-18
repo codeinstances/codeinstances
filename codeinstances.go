@@ -37,7 +37,7 @@ import (
 )
 
 // Version is this release of CodeInstances.
-const Version = "0.2.0"
+const Version = "0.3.0"
 
 // MaxOutput is how much of stdout and of stderr an instance keeps.
 const MaxOutput = 16 << 20
@@ -86,8 +86,10 @@ type Report struct {
 	Replayed    instance.Result `json:"replayed"`
 	Calls       int             `json:"calls"`
 	CallsServed int             `json:"calls_served"`
-	Values      int             `json:"values"`
-	ValuesUsed  int             `json:"values_used"`
+	// CallsUsed holds the seq numbers of the recorded calls that were served.
+	CallsUsed  []int `json:"calls_used"`
+	Values     int   `json:"values"`
+	ValuesUsed int   `json:"values_used"`
 }
 
 // Record runs the command and returns its instance. It returns an error only
@@ -201,7 +203,7 @@ func Replay(ctx context.Context, inst *instance.Instance, opts ReplayOptions) (*
 		return nil, err
 	}
 
-	rep := &Report{Recorded: inst.Result, Replayed: res, Calls: len(inst.Calls), CallsServed: proxy.Served(), Values: len(inst.Values)}
+	rep := &Report{Recorded: inst.Result, Replayed: res, Calls: len(inst.Calls), CallsServed: proxy.Served(), CallsUsed: proxy.Used(), Values: len(inst.Values)}
 	rep.Divergences = append(rep.Divergences, compareResults(inst.Result, res, opts.IgnoreStderr)...)
 	rep.Divergences = append(rep.Divergences, proxy.Divergences()...)
 	rep.ValuesUsed, rep.Divergences = compareValues(inst.Values, served, rep.Divergences)

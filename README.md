@@ -1,6 +1,7 @@
 # CodeInstances
 
-Keep a run of any program as a file, replay it, and compare it with another.
+Keep a run of any program as a file, replay it, compare it with another,
+shrink a failure to what causes it, and keep it as a test.
 
 Your code is versioned, reviewed and stored. Its runs are thrown away: a
 test fails in CI, the rerun passes, and the bug is gone. CodeInstances keeps
@@ -12,12 +13,15 @@ format. `codeinstances replay` runs the program again with the network
 replaced by the recording and tells you whether it came out the same.
 `codeinstances diff` puts two runs side by side, a passing one and a failing
 one say, and shows where they part ways and which calls got slower.
+`codeinstances shrink` narrows a failure down to the few answers that cause
+it, and `codeinstances test` replays a folder of instances as regression
+tests.
 
-**Status: v0.2.0, an early release.** Recording, offline replay, divergence
-reports, comparing two runs, the Go hook package, the open format and its
-integrity check work and are tested on Linux and macOS, with the release
-binaries also checked on Windows. The limits are listed
-[below](#limits-in-v020). Open source under the
+**Status: v0.3.0, an early release.** Recording, offline replay, divergence
+reports, comparing two runs, shrinking a failure, instances as regression
+tests, the Go hook package, the open format and its integrity check work and
+are tested on Linux and macOS, with the release binaries also checked on
+Windows. The limits are listed [below](#limits-in-v030). Open source under the
 Apache License 2.0.
 
 ## Download
@@ -133,6 +137,62 @@ recordings made with 0.2.0 or later, the calls whose time changed most.
 
 `diff` exits 0 when the runs are the same and 1 when they differ.
 
+### Shrinking a failure
+
+A failing run and a passing one usually differ in many answers: timestamps,
+ids, counters, and somewhere among them the one that breaks the program.
+`shrink` finds it:
+
+```sh
+codeinstances shrink -pass passing.instance failing.instance
+```
+
+```
+codeinstances: 23 answers differ between the runs; the failure (exit 1) needs 1 of them:
+  - GET https://api.example.com/item/7 (failing call 11): status: a 200, b 500; response body at $.error: only in b ("out of service")
+codeinstances: kept shrunk.instance (5b0e31c2d4a1: ./myprogram, exit 1, 23 calls, 5 values, 41 ms) after 10 runs
+```
+
+It pairs the calls of the two runs as `diff` does, then replays the program
+again and again offline, each time with the passing run's answer swapped in
+for some of the answers that differ. Delta debugging cuts the set down until
+no single remaining answer can be swapped without the failure going away. A
+run counts as the same failure when it ends the same way (the same exit code
+or signal), and with `-match`, when its output also matches a regular
+expression. The result is written to `shrunk.instance` (`-o` to change it):
+the failing run with only the needed answers left in, and only the calls the
+program made. It fails on replay just like the original.
+
+`shrink` refuses with exit 1 when the failing run doesn't fail again on
+replay, or when the program also fails with the passing run's answers, since
+then the answers aren't the cause. A program that fails only some of the
+time can lead it astray. `-max-runs` (200 by default) caps the replays, and
+`-timeout` (a minute by default) each one. To shrink against the build that
+has the bug, give its command after `--`.
+
+### Instances as regression tests
+
+```sh
+codeinstances test testdata/
+```
+
+```
+ok    testdata/orders.instance  matched, 38 ms
+FAIL  testdata/item7.instance  40 ms
+        - ended exit 1, want exit 0 (recorded exit 1)
+codeinstances: 1 of 2 tests passed
+```
+
+`test` replays every `.instance` file it's given, and every one under the
+folders it's given. A run recorded with exit 0 has to replay exactly, so a
+change that alters what the program sends or prints is caught. A run recorded
+as a failure has to exit 0 now, against the same answers that once broke it:
+the bug is fixed and stays fixed. `-expect match` or `-expect pass` sets one
+rule for every file. Give the build under test after `--`. It exits 0 when
+every test passed and 1 when any failed, so it drops into CI as it is.
+
+A shrunk failure makes a good test: it holds only what the bug needs.
+
 ### Commands
 
 | Command | What it does |
@@ -140,6 +200,8 @@ recordings made with 0.2.0 or later, the calls whose time changed most.
 | `record [flags] -- command [args...]` | Run the command and keep the run (`-o` names the file, `run.instance` by default) |
 | `replay [flags] file [-- command [args...]]` | Run it again against the recording and compare |
 | `diff [flags] a b` | Compare two instances: how they ended, their output, calls, values and speed |
+| `shrink [flags] -pass passing failing [-- command]` | Find the fewest failing answers that keep the failure, and keep that instance |
+| `test [flags] file-or-dir... [-- command]` | Replay instances as regression tests |
 | `show [-json] file` | Describe an instance |
 | `verify file` | Check the file hasn't been changed since it was recorded (exit 1 if it has) |
 | `version [-json]` | The version, the format version and the commit it was built from |
@@ -153,6 +215,15 @@ real servers; `-keep-secrets` keeps the headers that are redacted by default;
 `diff` flags, which go before the two files: `-values` compares the hooked
 values themselves; `-ignore-stderr` leaves stderr out; `-json` prints the
 comparison as JSON.
+
+`shrink` flags: `-pass file` (required) is the passing run; `-o` names the
+file to write; `-match regexp` must also be found in the output; `-max-runs`
+and `-timeout` as above; `-q` hides the line per run; `-json` prints the result
+as JSON.
+
+`test` flags: `-expect auto|match|pass`; `-ignore-stderr`; `-timeout` per
+test (a minute by default); `-v` lists the notes of passing tests too;
+`-json` prints the results as JSON.
 
 `replay` flags: `-strict` requires HTTP requests in exactly the recorded order
 (by default each request gets the next recorded answer for the same method,
@@ -232,7 +303,12 @@ makes an extra request, one prints the real clock) and checks both are caught,
 and checks `verify` catches an edited file. Last, it compares the instance
 with a second run, recorded while the servers were up, of the program that
 makes one extra request, and checks `diff` finds that request and times every
-call the two runs share. Progress goes to stderr and a JSON
+call the two runs share. It records a third run while the HTTPS server is
+breaking item 7, and checks that `shrink`, against the first run, needs only
+that one answer of all the ones that differ. Last, it puts the first run and
+the shrunk failure in a folder and checks that `test` fails the program as it
+is and passes a fixed build that carries on when an item can't be read.
+Progress goes to stderr and a JSON
 report to stdout; any failed check makes it exit 1.
 
 `sh scripts/record-tests.sh` runs every test, the race detector, the demo and
@@ -258,11 +334,13 @@ requests replayed three times, strict order, 4 and 8 MiB bodies, redaction,
 upstream errors replayed as the same 502), changed programs (an extra request,
 a missing request, an extra random value, an unhooked clock), comparing runs
 (call pairing, changed request bodies, JSON paths, line and byte differences,
-value counts, notes that don't count, speed order), crashes, killed
+value counts, notes that don't count, speed order), shrinking (two answers
+out of five found, refusals, the run limit, the shrunk file failing on
+replay), regression tests (match and pass, a fixed build), crashes, killed
 programs and timeouts, a recorder killed with SIGKILL leaving no file, and
 Ctrl-C reaching the program while the recorder finishes.
 
-## Limits in v0.2.0
+## Limits in v0.3.0
 
 - HTTP only. WebSocket, raw TCP and other protocols aren't recorded.
 - Bodies are buffered whole, up to 64 MiB each, so a streamed response reaches
@@ -289,6 +367,10 @@ Ctrl-C reaching the program while the recorder finishes.
 - `diff` compares a call's status and body, not its headers.
 - `diff` doesn't report cost (money, tokens or data sent); it reports
   differences and time.
+- `shrink` needs a passing run to take answers from, and it only swaps whole
+  answers; it doesn't shorten a response body or drop requests.
+- `shrink` assumes the program fails the same way every time it gets the same
+  answers. One that fails at random can mislead it.
 - Replay has no time limit unless you give `-timeout`, so give one when
   replaying a run that timed out.
 - The recording proxy listens on a loopback port with no password while the
@@ -298,10 +380,9 @@ Ctrl-C reaching the program while the recorder finishes.
 ## Where it goes next
 
 CodeInstances treats each run as an object you can do things to. This release
-does three of them: keep, replay and compare. Shrinking a failing run to the
-smallest one that still fails, turning recorded runs into regression tests,
-grouping repeated failures, and signed instances as proof of what ran are on
-the plan, in that rough order.
+does five of them: keep, replay, compare, shrink and test. Grouping repeated
+failures, sharing and storing instances, forking a run at a step, and signed
+instances as proof of what ran are on the plan, in that rough order.
 
 ## Building and contributing
 

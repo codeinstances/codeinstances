@@ -7,6 +7,8 @@
 //	codeinstances record [flags] -- command [args...]
 //	codeinstances replay [flags] file [-- command [args...]]
 //	codeinstances diff [flags] a.instance b.instance
+//	codeinstances shrink [flags] -pass passing.instance failing.instance [-- command [args...]]
+//	codeinstances test [flags] file-or-dir... [-- command [args...]]
 //	codeinstances show [-json] file
 //	codeinstances verify file
 //	codeinstances version [-json]
@@ -21,6 +23,8 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -41,16 +45,24 @@ Usage:
   codeinstances diff [flags] a.instance b.instance
       Compare two runs, such as a passing one and a failing one: how they
       ended, what they printed, their calls and values, and their speed.
+  codeinstances shrink [flags] -pass passing.instance failing.instance [-- command]
+      Find the fewest of the failing run's answers that still make the
+      program fail the same way, and keep that smallest failing instance.
+  codeinstances test [flags] file-or-dir... [-- command [args...]]
+      Replay instances as regression tests: a run that passed must replay
+      exactly, and a run that failed must now exit 0.
   codeinstances show [-json] file
       Describe an instance.
   codeinstances verify file
       Check that an instance file hasn't been changed since it was recorded.
   codeinstances version [-json]
 
-Run "codeinstances record -h", "replay -h" or "diff -h" for their flags.
+Run "codeinstances COMMAND -h" for a command's flags.
 Exit status: record exits as the program did; replay exits 0 when the run
 matched, 1 when it diverged; diff exits 0 when the runs are the same, 1 when
-they differ; any command exits 2 on a usage or file error.
+they differ; shrink exits 0 when it kept a smaller instance, 1 when the
+failure couldn't be narrowed down; test exits 0 when every test passed, 1
+when any failed; any command exits 2 on a usage or file error.
 `
 
 func main() {
@@ -69,6 +81,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return replay(args[1:], stdout, stderr)
 	case "diff":
 		return diff(args[1:], stdout, stderr)
+	case "shrink":
+		return shrink(args[1:], stdout, stderr)
+	case "test":
+		return test(args[1:], stdout, stderr)
 	case "show":
 		return show(args[1:], stdout, stderr)
 	case "verify":
@@ -447,4 +463,196 @@ func quoteArgs(argv []string) []string {
 		}
 	}
 	return out
+}
+
+func shrink(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("shrink", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	passFile := fs.String("pass", "", "the passing run to take answers from (required)")
+	out := fs.String("o", "shrunk.instance", "the instance file to write")
+	match := fs.String("match", "", "a regular expression the program's output must also match to count as the same failure")
+	maxRuns := fs.Int("max-runs", 200, "run the program at most this many times")
+	timeout := fs.Duration("timeout", time.Minute, "kill the program after this long, in each run (0: no limit)")
+	quiet := fs.Bool("q", false, "don't report each run")
+	asJSON := fs.Bool("json", false, "print the result as JSON")
+	fs.Usage = func() {
+		fmt.Fprintln(stderr, "usage: codeinstances shrink [flags] -pass passing.instance failing.instance [-- command [args...]]")
+		fs.PrintDefaults()
+	}
+	flagArgs, command := splitCommand(args)
+	if err := fs.Parse(flagArgs); err != nil {
+		return 2
+	}
+	if fs.NArg() != 1 || *passFile == "" {
+		fs.Usage()
+		return 2
+	}
+	opts := codeinstances.ShrinkOptions{Argv: command, Timeout: *timeout, MaxRuns: *maxRuns}
+	if *match != "" {
+		re, err := regexp.Compile(*match)
+		if err != nil {
+			fmt.Fprintf(stderr, "codeinstances shrink: -match: %v\n", err)
+			return 2
+		}
+		opts.Match = re
+	}
+	if !*quiet {
+		opts.Progress = stderr
+	}
+	pass, err := instance.Load(*passFile)
+	if err != nil {
+		fmt.Fprintf(stderr, "codeinstances shrink: %v\n", err)
+		return 2
+	}
+	fail, err := instance.Load(fs.Arg(0))
+	if err != nil {
+		fmt.Fprintf(stderr, "codeinstances shrink: %v\n", err)
+		return 2
+	}
+	ctx, stop := interrupts()
+	defer stop()
+	res, err := codeinstances.Shrink(ctx, pass, fail, opts)
+	if err != nil {
+		fmt.Fprintf(stderr, "codeinstances shrink: %v\n", err)
+		return 1
+	}
+	if err := instance.Save(*out, res.Instance); err != nil {
+		fmt.Fprintf(stderr, "codeinstances shrink: %v\n", err)
+		return 2
+	}
+	if *asJSON {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		enc.Encode(struct {
+			*codeinstances.ShrinkResult
+			File string `json:"file"`
+			ID   string `json:"id"`
+		}{res, *out, res.Instance.ID})
+		return 0
+	}
+	fmt.Fprintf(stdout, "codeinstances: %d answers differ between the runs; the failure (%s) needs %d of them:\n", res.Changed, res.Failure, len(res.Needed))
+	for _, n := range res.Needed {
+		fmt.Fprintf(stdout, "  - %s\n", n)
+	}
+	if !res.Minimal {
+		fmt.Fprintf(stdout, "codeinstances: stopped after %d runs (-max-runs); fewer answers might still do\n", res.Runs)
+	}
+	fmt.Fprintf(stdout, "codeinstances: kept %s (%s) after %d runs\n", *out, res.Instance.Summary(), res.Runs)
+	return 0
+}
+
+func test(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	expect := fs.String("expect", "auto", "what each replay must do: match (replay exactly), pass (exit 0), or auto (match for runs recorded with exit 0, pass for the rest)")
+	noStderr := fs.Bool("ignore-stderr", false, "leave stderr out when matching")
+	timeout := fs.Duration("timeout", time.Minute, "kill the program after this long, in each test (0: no limit)")
+	asJSON := fs.Bool("json", false, "print the results as JSON")
+	verbose := fs.Bool("v", false, "list the notes of passing tests too")
+	fs.Usage = func() {
+		fmt.Fprintln(stderr, "usage: codeinstances test [flags] file-or-dir... [-- command [args...]]")
+		fs.PrintDefaults()
+	}
+	flagArgs, command := splitCommand(args)
+	if err := fs.Parse(flagArgs); err != nil {
+		return 2
+	}
+	if fs.NArg() == 0 {
+		fs.Usage()
+		return 2
+	}
+	files, err := instanceFiles(fs.Args())
+	if err != nil {
+		fmt.Fprintf(stderr, "codeinstances test: %v\n", err)
+		return 2
+	}
+	if len(files) == 0 {
+		fmt.Fprintln(stderr, "codeinstances test: no .instance files found")
+		return 2
+	}
+	opts := codeinstances.TestOptions{Argv: command, Expect: *expect, IgnoreStderr: *noStderr, Timeout: *timeout}
+	ctx, stop := interrupts()
+	defer stop()
+	type entry struct {
+		File string `json:"file"`
+		*codeinstances.TestResult
+	}
+	var results []entry
+	failed := 0
+	for _, f := range files {
+		inst, err := instance.Load(f)
+		if err != nil {
+			fmt.Fprintf(stderr, "codeinstances test: %v\n", err)
+			return 2
+		}
+		r, err := codeinstances.TestInstance(ctx, inst, opts)
+		if err != nil {
+			fmt.Fprintf(stderr, "codeinstances test: %s: %v\n", f, err)
+			return 2
+		}
+		results = append(results, entry{f, r})
+		if !r.Passed {
+			failed++
+		}
+		if *asJSON {
+			continue
+		}
+		what := "matched"
+		if r.Expect == codeinstances.ExpectPass {
+			what = fmt.Sprintf("%s (recorded %s)", r.Replayed, r.Recorded)
+		}
+		if r.Passed {
+			fmt.Fprintf(stdout, "ok    %s  %s, %d ms\n", f, what, r.DurationMS)
+		} else {
+			fmt.Fprintf(stdout, "FAIL  %s  %d ms\n", f, r.DurationMS)
+		}
+		for _, p := range r.Problems {
+			fmt.Fprintf(stdout, "        - %s\n", p)
+		}
+		if *verbose {
+			for _, n := range r.Notes {
+				fmt.Fprintf(stdout, "        note: %s\n", n)
+			}
+		}
+	}
+	if *asJSON {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		enc.Encode(results)
+	} else {
+		fmt.Fprintf(stdout, "codeinstances: %d of %d tests passed\n", len(files)-failed, len(files))
+	}
+	if failed > 0 {
+		return 1
+	}
+	return 0
+}
+
+// instanceFiles lists the files given, and the .instance files under each
+// directory given, in name order.
+func instanceFiles(paths []string) ([]string, error) {
+	var files []string
+	for _, p := range paths {
+		fi, err := os.Stat(p)
+		if err != nil {
+			return nil, err
+		}
+		if !fi.IsDir() {
+			files = append(files, p)
+			continue
+		}
+		err = filepath.WalkDir(p, func(path string, d os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if !d.IsDir() && strings.HasSuffix(d.Name(), ".instance") {
+				files = append(files, path)
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	return files, nil
 }

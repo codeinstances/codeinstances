@@ -22,6 +22,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -61,6 +62,11 @@ type report struct {
 	RecordMS    int64            `json:"record_ms"`
 	ReplayMS    []int64          `json:"replay_ms"`
 	DiffMS      int64            `json:"diff_ms"`
+	ShrinkMS    int64            `json:"shrink_ms"`
+	ShrinkRuns  int              `json:"shrink_runs"`
+	Changed     int              `json:"shrink_answers_changed"`
+	Needed      int              `json:"shrink_answers_needed"`
+	TestMS      int64            `json:"test_ms"`
 	ServerCalls int              `json:"live_server_requests"`
 }
 
@@ -68,11 +74,12 @@ func main() {
 	child := flag.Bool("child", false, "run as the recorded program (used by the demo itself)")
 	extra := flag.Bool("extra", false, "child: make one request more than recorded")
 	unhooked := flag.Bool("unhooked", false, "child: print the real clock instead of the hooked one")
+	tolerant := flag.Bool("tolerant", false, "child: carry on when an item can't be read (the fixed build)")
 	cli := flag.String("cli", "", "the codeinstances command (default: next to this one, then PATH)")
 	replays := flag.Int("replays", 5, "how many times to replay the instance")
 	flag.Parse()
 	if *child {
-		os.Exit(runChild(*extra, *unhooked))
+		os.Exit(runChild(*extra, *unhooked, *tolerant))
 	}
 	rep, err := demo(*cli, *replays)
 	enc := json.NewEncoder(os.Stdout)
@@ -92,7 +99,7 @@ func main() {
 }
 
 // runChild is the program being recorded and replayed.
-func runChild(extra, unhooked bool) int {
+func runChild(extra, unhooked, tolerant bool) int {
 	client := hook.Client()
 	client.Timeout = 30 * time.Second
 	start := hook.Now()
@@ -139,8 +146,16 @@ func runChild(extra, unhooked bool) int {
 		}(i)
 	}
 	wg.Wait()
+	failed := 0
 	for i, it := range items {
 		fmt.Printf("item %d %s\n", i, it)
+		if !strings.HasPrefix(it, "200 ") {
+			failed++
+		}
+	}
+	if failed > 0 && !tolerant {
+		fmt.Fprintf(os.Stderr, "%d items couldn't be read\n", failed)
+		return 1
 	}
 
 	if extra {
@@ -166,16 +181,18 @@ func get(c *http.Client, url string) (string, error) {
 // servers answer differently every time, so a replay that matches can only
 // have come from the recording.
 type servers struct {
-	mu    sync.Mutex
-	count int
-	ln    []net.Listener
-	srv   []*http.Server
+	mu     sync.Mutex
+	count  int
+	broken bool // item 7 fails, as a bug in the service would make it
+	ln     []net.Listener
+	srv    []*http.Server
 }
 
 func (s *servers) handler(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	s.count++
 	n := s.count
+	broken := s.broken
 	s.mu.Unlock()
 	stamp := time.Now().UnixNano()
 	w.Header().Set("Content-Type", "application/json")
@@ -189,6 +206,9 @@ func (s *servers) handler(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, `{"price":%d,"at":%d}`, 100+stamp%900, stamp)
 	case r.URL.Path == "/status":
 		fmt.Fprintf(w, `{"ok":true,"served":%d}`, n)
+	case broken && r.URL.Path == "/item/7":
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprintf(w, `{"error":"out of service","at":%d}`, stamp)
 	case strings.HasPrefix(r.URL.Path, "/item/"):
 		fmt.Fprintf(w, `{"item":%q,"stock":%d}`, strings.TrimPrefix(r.URL.Path, "/item/"), stamp%97)
 	default:
@@ -211,7 +231,9 @@ func (s *servers) start(auth *ca.Authority) (secureAddr, plainAddr string, err e
 		return "", "", err
 	}
 	for _, l := range []net.Listener{tl, pl} {
-		srv := &http.Server{Handler: http.HandlerFunc(s.handler), ReadHeaderTimeout: 10 * time.Second}
+		// Connections the recorder's proxy drops when a run ends would
+		// otherwise be logged as handshake errors.
+		srv := &http.Server{Handler: http.HandlerFunc(s.handler), ReadHeaderTimeout: 10 * time.Second, ErrorLog: log.New(io.Discard, "", 0)}
 		s.ln = append(s.ln, l)
 		s.srv = append(s.srv, srv)
 		go srv.Serve(l)
@@ -309,6 +331,19 @@ func demo(cli string, replays int) (*report, error) {
 		add("a second run is recorded", false, fmt.Sprintf("exit %d", code))
 	}
 
+	// A failing run: the service breaks item 7 and the program exits 1.
+	srv.mu.Lock()
+	srv.broken = true
+	srv.mu.Unlock()
+	failing := filepath.Join(work, "failing.instance")
+	_, code, err = runCLI(cli, "record", "-q", "-o", failing,
+		"-resolve", secureHost+"="+secureAddr, "-resolve", plainHost+"="+plainAddr,
+		"-upstream-ca", caFile, "--", self, "-child")
+	if err != nil {
+		return rep, err
+	}
+	add("a failing run is recorded", code == 1, fmt.Sprintf("exit %d", code))
+
 	// From here on nothing is listening.
 	srv.stop()
 	if c, err := net.DialTimeout("tcp", secureAddr, time.Second); err == nil {
@@ -395,6 +430,43 @@ func demo(cli string, replays int) (*report, error) {
 	add("diff finds the extra request in a second run", code == 1 && extraFound && cmp.Calls.OnlyA == 0 && cmp.Calls.OnlyB == 1,
 		fmt.Sprintf("%d differences, %d calls changed, %d only in b", len(cmp.Differences), cmp.Calls.Changed, cmp.Calls.OnlyB))
 	add("diff times every paired call", len(cmp.Speed.Calls) == 3+parallel, fmt.Sprintf("%d calls timed in both runs", len(cmp.Speed.Calls)))
+
+	// Shrink the failing run against the first one: of all the answers that
+	// differ, only item 7's should be needed.
+	shrunk := filepath.Join(work, "tests", "item7.instance")
+	os.MkdirAll(filepath.Dir(shrunk), 0o700)
+	t = time.Now()
+	out, code, err = runCLI(cli, "shrink", "-q", "-json", "-pass", file, "-o", shrunk, failing)
+	rep.ShrinkMS = time.Since(t).Milliseconds()
+	if err != nil {
+		return rep, err
+	}
+	var sh struct {
+		Changed int      `json:"changed"`
+		Needed  []string `json:"needed"`
+		Runs    int      `json:"runs"`
+		Minimal bool     `json:"minimal"`
+	}
+	json.Unmarshal([]byte(out), &sh)
+	rep.ShrinkRuns, rep.Changed, rep.Needed = sh.Runs, sh.Changed, len(sh.Needed)
+	add("shrink narrows the failure to item 7's answer", code == 0 && sh.Minimal && len(sh.Needed) == 1 && strings.Contains(sh.Needed[0], "/item/7 ") && sh.Changed > 10,
+		fmt.Sprintf("%d of %d differing answers needed, %d runs", len(sh.Needed), sh.Changed, sh.Runs))
+
+	// The first run and the shrunk failure as regression tests: the program
+	// as it is fails the bug's test, the fixed build passes both.
+	os.Rename(file, filepath.Join(work, "tests", "orders.instance"))
+	out, code, err = runCLI(cli, "test", filepath.Join(work, "tests"))
+	if err != nil {
+		return rep, err
+	}
+	add("test fails the build that still has the bug", code == 1 && strings.Contains(out, "1 of 2 tests passed"), lastLine(out))
+	t = time.Now()
+	out, code, err = runCLI(cli, "test", filepath.Join(work, "tests"), "--", self, "-child", "-tolerant")
+	rep.TestMS = time.Since(t).Milliseconds()
+	if err != nil {
+		return rep, err
+	}
+	add("test passes the fixed build", code == 0 && strings.Contains(out, "2 of 2 tests passed"), lastLine(out))
 	return finish(rep), nil
 }
 

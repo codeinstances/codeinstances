@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -34,6 +35,24 @@ func TestMain(m *testing.M) {
 	case "hello":
 		fmt.Println("hello", hook.Uint64())
 		code, _ := strconv.Atoi(os.Getenv("CI_CMD_EXIT"))
+		os.Exit(code)
+	case "answers":
+		// Fails when the answer to /2 is "bad".
+		c := hook.Client()
+		code := 0
+		for i := 1; i <= 3; i++ {
+			resp, err := c.Get(fmt.Sprintf("http://plain.test/%d", i))
+			if err != nil {
+				fmt.Println("error", err)
+				os.Exit(2)
+			}
+			b, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			fmt.Println(i, string(b))
+			if i == 2 && string(b) == "bad" {
+				code = 1
+			}
+		}
 		os.Exit(code)
 	case "different":
 		fmt.Println("something else")
@@ -309,6 +328,97 @@ func TestDiff(t *testing.T) {
 	edited := filepath.Join(dir, "edited.instance")
 	os.WriteFile(edited, bytes.Replace(data, []byte(`"exit_code": 3`), []byte(`"exit_code": 0`), 1), 0o600)
 	for _, args := range [][]string{{"diff"}, {"diff", a}, {"diff", a, b, a}, {"diff", a, edited}, {"diff", a, filepath.Join(dir, "missing")}, {"diff", "-nope", a, b}} {
+		if _, _, code := cli(t, args...); code != 2 {
+			t.Errorf("%v: exit %d, want 2", args, code)
+		}
+	}
+}
+
+// answersFile writes a hand-made recording of the "answers" child.
+func answersFile(t *testing.T, path string, exit int, answers ...string) {
+	t.Helper()
+	var printed strings.Builder
+	for i, a := range answers {
+		fmt.Fprintln(&printed, i+1, a)
+	}
+	inst := &instance.Instance{Tool: "test", Command: instance.Command{Argv: childArgs()},
+		Result: instance.Result{ExitCode: exit, Stdout: instance.NewBody([]byte(printed.String()))}}
+	for i, a := range answers {
+		inst.Calls = append(inst.Calls, instance.Call{Seq: i + 1, Kind: instance.KindHTTP,
+			Request:  instance.Request{Method: "GET", URL: fmt.Sprintf("http://plain.test/%d", i+1)},
+			Response: &instance.Response{Status: 200, Body: instance.NewBody([]byte(a))}})
+	}
+	if err := instance.Save(path, inst); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestShrinkAndTest(t *testing.T) {
+	dir := t.TempDir()
+	pass := filepath.Join(dir, "pass.instance")
+	fail := filepath.Join(dir, "fail.instance")
+	answersFile(t, pass, 0, "good", "good", "good")
+	answersFile(t, fail, 1, "bad", "bad", "bad")
+	t.Setenv("CI_CMD_CHILD", "answers")
+
+	out := filepath.Join(dir, "shrunk.instance")
+	o, e, code := cli(t, "shrink", "-pass", pass, "-o", out, fail)
+	for _, want := range []string{"3 answers differ between the runs; the failure (exit 1) needs 1 of them:", "GET http://plain.test/2 (failing call 2): response body line 1: a \"good\", b \"bad\"", "codeinstances: kept " + out} {
+		if code != 0 || !strings.Contains(o, want) {
+			t.Fatalf("lacks %q (exit %d):\n%s\n%s", want, code, o, e)
+		}
+	}
+	if !strings.Contains(e, "codeinstances: run 1 with 3 of 3 failing answers: fails (exit 1)") {
+		t.Fatal(e)
+	}
+	shrunk, err := instance.Load(out)
+	if err != nil || len(shrunk.Calls) != 3 || string(shrunk.Calls[0].Response.Body.MustBytes()) != "good" || string(shrunk.Calls[1].Response.Body.MustBytes()) != "bad" {
+		t.Fatal(err)
+	}
+	o, _, code = cli(t, "shrink", "-json", "-q", "-pass", pass, "-o", out, fail)
+	var res struct {
+		Needed []string `json:"needed"`
+		File   string   `json:"file"`
+		ID     string   `json:"id"`
+	}
+	if code != 0 || json.Unmarshal([]byte(o), &res) != nil || len(res.Needed) != 1 || res.File != out || !strings.HasPrefix(res.ID, "sha256:") {
+		t.Fatalf("%d %s", code, o)
+	}
+	// Nothing to shrink: two passing runs.
+	if _, e, code := cli(t, "shrink", "-q", "-pass", pass, "-o", out, pass); code != 1 || !strings.Contains(e, "the failing run exited 0") {
+		t.Fatalf("%d %s", code, e)
+	}
+	for _, args := range [][]string{{"shrink", fail}, {"shrink", "-pass", pass}, {"shrink", "-pass", pass, "-match", "(", fail}, {"shrink", "-pass", filepath.Join(dir, "none"), fail}} {
+		if _, _, code := cli(t, args...); code != 2 {
+			t.Errorf("%v: exit %d, want 2", args, code)
+		}
+	}
+
+	// As regression tests: the passing run replays, the failing one still fails.
+	tests := filepath.Join(dir, "tests")
+	os.Mkdir(tests, 0o700)
+	os.Rename(pass, filepath.Join(tests, "a-pass.instance"))
+	os.Rename(out, filepath.Join(tests, "b-bug.instance"))
+	os.WriteFile(filepath.Join(tests, "notes.txt"), []byte("not an instance"), 0o600)
+	o, _, code = cli(t, "test", tests)
+	if code != 1 || !strings.Contains(o, "ok    "+filepath.Join(tests, "a-pass.instance")+"  matched") ||
+		!strings.Contains(o, "FAIL  "+filepath.Join(tests, "b-bug.instance")) || !strings.Contains(o, "ended exit 1, want exit 0 (recorded exit 1)") ||
+		!strings.Contains(o, "codeinstances: 1 of 2 tests passed") {
+		t.Fatalf("%d\n%s", code, o)
+	}
+	// A fixed program passes both.
+	t.Setenv("CI_CMD_CHILD", "hello")
+	t.Setenv("CI_CMD_EXIT", "0")
+	o, _, code = cli(t, append([]string{"test", "-expect", "pass", "-v", tests, "--"}, childArgs()...)...)
+	if code != 0 || !strings.Contains(o, "exit 0 (recorded exit 1)") || !strings.Contains(o, "note: ") || !strings.Contains(o, "2 of 2 tests passed") {
+		t.Fatalf("%d\n%s", code, o)
+	}
+	o, _, code = cli(t, "test", "-json", "-expect", "pass", tests, "--", childArgs()[0], childArgs()[1])
+	var results []map[string]any
+	if code != 0 || json.Unmarshal([]byte(o), &results) != nil || len(results) != 2 || results[0]["passed"] != true {
+		t.Fatalf("%d %s", code, o)
+	}
+	for _, args := range [][]string{{"test"}, {"test", filepath.Join(dir, "none")}, {"test", "-expect", "maybe", tests}, {"test", t.TempDir()}} {
 		if _, _, code := cli(t, args...); code != 2 {
 			t.Errorf("%v: exit %d, want 2", args, code)
 		}

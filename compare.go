@@ -198,9 +198,12 @@ func callKeyOf(c instance.Call) string {
 	return c.Request.Method + " " + c.Request.URL + " " + fmt.Sprintf("%x", sum)
 }
 
-func compareCalls(c *Comparison, a, b []instance.Call) {
-	pair := make([]int, len(a)) // index into b, or -1
-	usedB := make([]bool, len(b))
+// pairCalls pairs a's calls with b's: first by method, URL and request body,
+// in order, then the calls left over by method and URL alone. pair[i] is the
+// index in b of a's call i, or -1; usedB marks b's paired calls.
+func pairCalls(a, b []instance.Call) (pair []int, usedB []bool) {
+	pair = make([]int, len(a))
+	usedB = make([]bool, len(b))
 	for i := range pair {
 		pair[i] = -1
 	}
@@ -225,7 +228,11 @@ func compareCalls(c *Comparison, a, b []instance.Call) {
 	}
 	match(callKeyOf)
 	match(func(call instance.Call) string { return call.Request.Method + " " + call.Request.URL })
+	return pair, usedB
+}
 
+func compareCalls(c *Comparison, a, b []instance.Call) {
+	pair, usedB := pairCalls(a, b)
 	for i, ca := range a {
 		if pair[i] < 0 {
 			c.Calls.OnlyA++

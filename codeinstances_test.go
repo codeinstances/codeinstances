@@ -72,6 +72,28 @@ func child(what string) int {
 			return n
 		}
 		return 0
+	case "shrinkable":
+		// Fails only when the answers to /3 and /5 both say "bad".
+		bad := 0
+		for i := 1; i <= 6; i++ {
+			resp, err := c.Get(fmt.Sprintf("https://secure.test/%d", i))
+			if err != nil {
+				fmt.Println("error", err)
+				return 2
+			}
+			b, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			fmt.Println(i, string(b))
+			if (i == 3 || i == 5) && string(b) == "bad" {
+				bad++
+			}
+		}
+		if bad == 2 {
+			get("https://secure.test/report")
+			fmt.Fprintln(os.Stderr, "failed: both bad")
+			return 1
+		}
+		return 0
 	case "unhooked":
 		fmt.Println("at", time.Now().Format(time.RFC3339Nano))
 		return 0

@@ -13,7 +13,8 @@
 # replayed offline, changes caught, an edited file caught); and a Python
 # program that isn't hooked at all is recorded against a live local server,
 # the server stopped, and the run replayed with show and verify working on
-# the file, and diff telling it apart from a second run.
+# the file, diff telling it apart from a second run, and test replaying it as
+# a regression test.
 import http.server
 import json
 import os
@@ -112,6 +113,9 @@ def smoke(bin_dir, version):
         found = json.loads(cmp.stdout)
         require(found["calls"]["changed"] == 2 and any("response body at $.at: a " in d for d in found["differences"]), f"diff: {found}")
         print("ok   diff tells two runs apart, down to the JSON member")
+        tested = run([cli, "test", file])
+        require("1 of 1 tests passed" in tested.stdout, f"test: {tested.stdout}")
+        print("ok   the Python run passes as a regression test")
         shown = run([cli, "show", file]).stdout
         require("GET " + url + "/two?x=1 -> 200" in shown, f"show: {shown}")
         require("intact" in run([cli, "verify", file]).stdout, "verify")
