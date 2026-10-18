@@ -54,12 +54,36 @@ func (s *Signature) Message() []byte {
 // Key returns the signature's public key, or nil when it isn't a valid
 // Ed25519 key.
 func (s *Signature) Key() ed25519.PublicKey {
-	k, err := base64.StdEncoding.DecodeString(s.PublicKey)
-	if err != nil || len(k) != ed25519.PublicKeySize {
+	k, ok := canonicalBase64(s.PublicKey)
+	if !ok || len(k) != ed25519.PublicKeySize {
 		return nil
 	}
 	return ed25519.PublicKey(k)
 }
+
+// canonicalBase64 decodes standard, padded base64 and accepts it only in the
+// one form EncodeToString writes, so the bytes of a signature or key can't be
+// spelled another way (other padding bits, line breaks) to give the file a
+// new id.
+func canonicalBase64(s string) ([]byte, bool) {
+	b, err := base64.StdEncoding.Strict().DecodeString(s)
+	if err != nil || base64.StdEncoding.EncodeToString(b) != s {
+		return nil, false
+	}
+	return b, true
+}
+
+// Limits on signatures in algorithms this version doesn't check, which
+// anyone can add: they're kept, but can't grow a file without bound.
+const (
+	maxSignatures   = 16
+	maxUnknownField = 16 << 10
+)
+
+// signatureMembers are the members a signature object may have. Members
+// the signature doesn't cover would let anyone change the file's bytes, so
+// others are refused; a later version adds fields with a new alg.
+var signatureMembers = map[string]bool{"alg": true, "public_key": true, "content": true, "signer": true, "signed_at": true, "signature": true}
 
 // KeyID is a short name for a public key: the first 16 hex digits of its
 // SHA-256.
@@ -96,19 +120,25 @@ func (s *Signature) check() error {
 	}
 	if s.Alg != AlgEd25519 {
 		// Another algorithm, from a later version: kept, but not checked.
+		if len(s.PublicKey) > maxUnknownField || len(s.Value) > maxUnknownField {
+			return fmt.Errorf("an %s key or signature over %d bytes", s.Alg, maxUnknownField)
+		}
 		return nil
 	}
 	if s.Key() == nil {
-		return errors.New("public_key isn't an Ed25519 key in base64")
+		return errors.New("public_key isn't an Ed25519 key in standard, padded base64")
 	}
-	v, err := base64.StdEncoding.DecodeString(s.Value)
-	if err != nil || len(v) != ed25519.SignatureSize {
-		return errors.New("signature isn't an Ed25519 signature in base64")
+	v, ok := canonicalBase64(s.Value)
+	if !ok || len(v) != ed25519.SignatureSize {
+		return errors.New("signature isn't an Ed25519 signature in standard, padded base64")
 	}
 	return nil
 }
 
 func (inst *Instance) checkSignatures() error {
+	if len(inst.Signatures) > maxSignatures {
+		return fmt.Errorf("more than %d signatures", maxSignatures)
+	}
 	seen := map[string]bool{}
 	for i := range inst.Signatures {
 		s := &inst.Signatures[i]
@@ -119,6 +149,22 @@ func (inst *Instance) checkSignatures() error {
 			return fmt.Errorf("signature %d: the key signed twice", i+1)
 		}
 		seen[s.Alg+" "+s.PublicKey] = true
+	}
+	return nil
+}
+
+// signatureShape refuses members a signature object doesn't have.
+func signatureShape(tree jval) error {
+	sigs, ok := tree.items["signatures"]
+	if !ok || sigs.kind != jarr {
+		return nil
+	}
+	for i, s := range sigs.arr {
+		for _, k := range s.keys {
+			if !signatureMembers[k] {
+				return fmt.Errorf("signature %d: the member %q isn't part of a signature, and nothing would vouch for it", i+1, k)
+			}
+		}
 	}
 	return nil
 }
@@ -137,7 +183,7 @@ func verifySignatures(inst *Instance, data []byte) error {
 		if s.Alg != AlgEd25519 {
 			continue
 		}
-		v, _ := base64.StdEncoding.DecodeString(s.Value)
+		v, _ := canonicalBase64(s.Value)
 		if s.Content != content || !ed25519.Verify(s.Key(), s.Message(), v) {
 			return fmt.Errorf("signature %d (key %s): %w", i+1, KeyID(s.Key()), ErrBadSignature)
 		}

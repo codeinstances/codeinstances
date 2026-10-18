@@ -9,6 +9,9 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -199,5 +202,109 @@ func TestMessageIsFixed(t *testing.T) {
 	want := "codeinstances/0 signature\ncontent sha256:" + strings.Repeat("ab", 32) + "\nkey KEY\nsigned_at 2026-10-18T06:30:15Z\nsigner ci\n"
 	if string(s.Message()) != want {
 		t.Fatalf("%q", s.Message())
+	}
+}
+
+// edit applies change to the signed sample's JSON tree and writes a
+// matching id, as anyone could.
+func editSigned(t *testing.T, data []byte, change func(doc map[string]any)) []byte {
+	t.Helper()
+	var doc map[string]any
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	change(doc)
+	out, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return reid(t, out)
+}
+
+func TestSignatureBytesCantBeRespelled(t *testing.T) {
+	data, _ := signedSample(t)
+	sig := func(doc map[string]any) map[string]any {
+		return doc["signatures"].([]any)[0].(map[string]any)
+	}
+	if _, err := Parse(editSigned(t, data, func(map[string]any) {})); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	for name, change := range map[string]func(doc map[string]any){
+		"padding bits": func(doc map[string]any) {
+			v := sig(doc)["signature"].(string)
+			// The last character before "==" carries 4 unused bits.
+			b := []byte(v)
+			i := len(b) - 3
+			const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+			p := strings.IndexByte(alphabet, b[i])
+			b[i] = alphabet[p^1]
+			sig(doc)["signature"] = string(b)
+		},
+		"line break in signature": func(doc map[string]any) {
+			v := sig(doc)["signature"].(string)
+			sig(doc)["signature"] = v[:10] + "\n" + v[10:]
+		},
+		"line break in key": func(doc map[string]any) {
+			v := sig(doc)["public_key"].(string)
+			sig(doc)["public_key"] = v[:10] + "\r\n" + v[10:]
+		},
+		"extra member": func(doc map[string]any) { sig(doc)["note"] = "anything at all" },
+		"too many": func(doc map[string]any) {
+			list := doc["signatures"].([]any)
+			for i := 0; i < 16; i++ {
+				list = append(list, map[string]any{"alg": "mldsa65", "public_key": fmt.Sprint(i), "content": sig(doc)["content"], "signed_at": "2027-01-01T00:00:00Z", "signature": "x"})
+			}
+			doc["signatures"] = list
+		},
+		"huge unknown entry": func(doc map[string]any) {
+			doc["signatures"] = append(doc["signatures"].([]any), map[string]any{"alg": "mldsa65", "public_key": strings.Repeat("A", 20000), "content": sig(doc)["content"], "signed_at": "2027-01-01T00:00:00Z", "signature": "x"})
+		},
+	} {
+		if _, err := Parse(editSigned(t, data, change)); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}
+
+// The signed example: docs/example.instance signed by a key made from a
+// fixed seed, so other implementations can check theirs against it.
+func exampleKey() ed25519.PrivateKey {
+	seed := make([]byte, ed25519.SeedSize)
+	for i := range seed {
+		seed[i] = byte(i + 1)
+	}
+	return ed25519.NewKeyFromSeed(seed)
+}
+
+func TestSignedExample(t *testing.T) {
+	path := filepath.Join("..", "docs", "example-signed.instance")
+	inst, err := Load(filepath.Join("..", "docs", "example.instance"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := inst.Sign(exampleKey(), "example", time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	want, err := Marshal(inst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if os.Getenv("CODEINSTANCES_WRITE_EXAMPLE") == "1" {
+		os.WriteFile(path, want, 0o644)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatal("docs/example-signed.instance isn't the signed example (set CODEINSTANCES_WRITE_EXAMPLE=1 to write it)")
+	}
+	signed, err := Parse(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, _ := os.ReadFile(filepath.Join("..", "docs", "example.instance"))
+	if c, _ := ContentID(got); c != sample0ID(plain) || signed.Signatures[0].Content != c {
+		t.Fatal("the signed example's content id isn't the example's id")
 	}
 }

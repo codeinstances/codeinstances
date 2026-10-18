@@ -442,9 +442,14 @@ func show(args []string, stdout, stderr io.Writer) int {
 	}
 	if len(inst.Signatures) > 0 {
 		checks, _ := codeinstances.CheckSignatures(inst, nil)
-		fmt.Fprintf(stdout, "content   %s\n", inst.Signatures[0].Content)
+		content, _ := instance.ContentID(data)
+		fmt.Fprintf(stdout, "content   %s\n", content)
 		for _, c := range checks {
-			fmt.Fprintf(stdout, "signed    %s\n", describeSignature(c))
+			if c.Checked {
+				fmt.Fprintf(stdout, "signed    %s\n", strings.TrimPrefix(describeSignature(c, false), "signed "))
+			} else {
+				fmt.Fprintf(stdout, "unchecked %s\n", describeSignature(c, false))
+			}
 		}
 	}
 	switch {
@@ -534,7 +539,10 @@ func verify(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stdout, "%s: intact (%s)\n", path, inst.ID)
 		}
 		for _, c := range checks {
-			fmt.Fprintf(stdout, "  signed %s\n", describeSignature(c))
+			fmt.Fprintf(stdout, "  %s\n", describeSignature(c, len(trusted) > 0))
+			if c.Checked {
+				fmt.Fprintf(stdout, "    key %s\n", c.Signature.PublicKey)
+			}
 		}
 		if len(checks) == 0 && len(trusted) == 0 {
 			fmt.Fprintln(stdout, "  not signed: the id shows the file wasn't changed, not who made it")
@@ -543,13 +551,14 @@ func verify(args []string, stdout, stderr io.Writer) int {
 	return code
 }
 
-// describeSignature is one line about a checked signature.
-func describeSignature(c codeinstances.SignatureCheck) string {
+// describeSignature is one line about a checked signature. withTrust says
+// whether a trust file was given.
+func describeSignature(c codeinstances.SignatureCheck, withTrust bool) string {
 	s := c.Signature
 	if !c.Checked {
-		return fmt.Sprintf("with %s, an algorithm this version doesn't check", codeinstances.SafeText(s.Alg))
+		return fmt.Sprintf("an entry in %q, which this version doesn't check and anyone could have added", codeinstances.SafeText(s.Alg))
 	}
-	line := "by key " + c.KeyID
+	line := "signed by key " + c.KeyID
 	if s.Signer != "" {
 		line += fmt.Sprintf(" (%q)", codeinstances.SafeText(s.Signer))
 	}
@@ -559,15 +568,17 @@ func describeSignature(c codeinstances.SignatureCheck) string {
 		line += ", trusted as " + c.Trusted.Label
 	case c.Trusted != nil:
 		line += ", trusted"
+	case withTrust:
+		line += ", valid, but not by a trusted key"
 	default:
-		line += ", valid, not among the trusted keys"
+		line += ", valid (give -trust to check the key)"
 	}
 	return line
 }
 
 // signFlags adds -sign and -signer to a command that writes an instance.
 func signFlags(fs *flag.FlagSet) (key, signer *string) {
-	key = fs.String("sign", "", "sign the instance with this private key file, as keygen writes them")
+	key = fs.String("sign", "", "sign the instance with this private key file, as keygen writes them (the program runs as you and could read it; sign afterwards with codeinstances sign if it mustn't)")
 	signer = fs.String("signer", "", "a name to sign as, such as ci or agent-runner-3 (a claim; the key is what's checked)")
 	return key, signer
 }
@@ -668,7 +679,17 @@ func sign(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "codeinstances sign: %v\n", err)
 		return 2
 	}
-	inst, err := instance.Load(fs.Arg(0))
+	data, err := os.ReadFile(fs.Arg(0))
+	if err != nil {
+		fmt.Fprintf(stderr, "codeinstances sign: %v\n", err)
+		return 2
+	}
+	inst, err := instance.Parse(data)
+	if err != nil {
+		fmt.Fprintf(stderr, "codeinstances sign: %s: %v\n", fs.Arg(0), err)
+		return 2
+	}
+	content, err := instance.ContentID(data)
 	if err != nil {
 		fmt.Fprintf(stderr, "codeinstances sign: %v\n", err)
 		return 2
@@ -676,6 +697,12 @@ func sign(args []string, stdout, stderr io.Writer) int {
 	old := inst.ID
 	if err := inst.Sign(key, *signer, time.Now()); err != nil {
 		fmt.Fprintf(stderr, "codeinstances sign: %v\n", err)
+		return 2
+	}
+	if inst.Signatures[len(inst.Signatures)-1].Content != content {
+		// The file has members this version doesn't know, which writing it
+		// again would drop: the signature would vouch for less than the file.
+		fmt.Fprintf(stderr, "codeinstances sign: %s has members this version of codeinstances doesn't know; sign it with the version that wrote it\n", fs.Arg(0))
 		return 2
 	}
 	path := *out

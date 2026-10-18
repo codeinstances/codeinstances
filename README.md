@@ -367,10 +367,12 @@ codeinstances sign -key ci.key run.instance       # or sign a run afterwards
 codeinstances verify -trust ci.pub run.instance   # exit 0 only if ci.key signed it
 ```
 
-`keygen` writes an Ed25519 key pair: `ci.key`, a PEM private key readable
-only by you (signing refuses a key file others can read, as ssh does), and
+`keygen` writes an Ed25519 key pair: `ci.key`, an unencrypted PEM private
+key readable only by you (except on Windows, where the check isn't made,
+signing refuses a key file other users can read or change, as ssh does), and
 `ci.pub`, one line to give to whoever checks your runs. A trust file is
-those lines put together. `keygen` never overwrites a key.
+those lines put together. `keygen` never overwrites a key. It writes into
+the folder you're in, so keep `*.key` out of version control.
 
 A signature vouches for the run's content id, the id the file had before
 it was signed, so several keys can sign one run (a CI runner, then the
@@ -382,13 +384,21 @@ refuses one whose id doesn't. `verify` lists who signed; with `-trust` it
 exits 1 unless a key in the trust file did. `show` and `report` list the
 signatures too.
 
-A store started with `serve -trust keys` takes only runs signed by one of
-those keys, and `pull -trust keys` keeps a run only if one of them signed it.
+A store started with `serve -trust keys` takes only uploads signed by one of
+those keys (runs already in its folder are served as they are), and `pull -trust keys` keeps a run only if one of them signed it.
 `record` and `fork` sign as they keep the run with `-sign key` (and
 `-signer name`). `shrink` doesn't carry signatures over, since the shrunk run
 is a run of its own; sign it if you want it signed. A fork's `parent` is the
-id of the file it was forked from, signatures and all, so a signed fork vouches
-for its lineage too.
+id of the file it was forked from, signatures and all, so a signed fork
+vouches for the parent it names; signing the parent afterwards gives that
+file a new id, which the fork doesn't know.
+
+`record -sign` runs the program as you, so the program can read the key
+file. When the program shouldn't be able to sign (an AI agent, tests that
+run code you don't control), record without `-sign` and sign afterwards, in
+a step the program has no part in. Until it's signed, the file is only as
+safe as the place it sits: whoever can change it there can change what gets
+signed. [docs/ci.md](docs/ci.md) shows that in CI.
 
 ### Commands
 
@@ -660,7 +670,14 @@ Ctrl-C reaching the program while the recorder finishes.
   (`verify -trust`, `serve -trust`, `pull -trust`) notices.
 - Signing vouches for what was kept, not that it was kept faithfully: a
   machine that records can sign a run it changed first. Sign where you
-  trust the recording, as close to it as you can (`record -sign`).
+  trust the recording, as close to it as you can.
+- A program recorded with `record -sign` runs as you and can read the key.
+  Sign afterwards, in a separate step, when the program mustn't hold it.
+- A signature fixes a run's content id, not the file's id: anyone can take
+  a signature off, or add an entry in an algorithm this version doesn't
+  check, and get a new file id. Name a signed run by its content id.
+- The key file isn't encrypted, and on Windows its permissions aren't
+  checked.
 - Only Ed25519 is made and checked. Signatures in other algorithms are kept
   and left unchecked.
 - Replay has no time limit unless you give `-timeout`, so give one when

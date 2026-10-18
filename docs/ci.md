@@ -101,26 +101,29 @@ codeinstances keygen -o ci -label ci@example.com
 ```
 
 Add the contents of `ci.key` as a secret `CODEINSTANCES_SIGNING_KEY`, and
-keep `ci.pub` with whoever checks the runs. Then write the key to a file only
-the job can read, and record with it:
+keep `ci.pub` with whoever checks the runs. Record as before, without the
+key, and sign in a step of its own, right after the test step and before the
+report and push:
 
 ```yaml
-      - name: Test, keeping and signing the run
+      - name: Sign the run
+        if: always()
         env:
           SIGNING_KEY: ${{ secrets.CODEINSTANCES_SIGNING_KEY }}
         run: |
-          sign=""
-          if [ -n "$SIGNING_KEY" ]; then
-            umask 077
-            printf '%s\n' "$SIGNING_KEY" > "$RUNNER_TEMP/ci.key"
-            sign="-sign $RUNNER_TEMP/ci.key -signer ci"
+          if [ -n "$SIGNING_KEY" ] && [ -f run.instance ]; then
+            key="$RUNNER_TEMP/ci.key"
+            (umask 077 && printf '%s\n' "$SIGNING_KEY" > "$key")
+            codeinstances sign -key "$key" -signer ci run.instance
+            rm -f "$key"
           fi
-          codeinstances record -q $sign -o run.instance -- go test ./...
 ```
 
-The `umask` matters: `codeinstances` won't sign with a key file others can
-read. A pull request from a fork gets no secrets, so its run is kept
-unsigned and still tested.
+The key is never in the test step's environment or on disk while the tests
+run, so the tests, their dependencies or an agent being recorded can't sign
+with it. `codeinstances` won't sign with a key file others can read, hence
+the `umask`. A pull request from a fork gets no secrets, so its run is kept
+unsigned.
 
 A store started with `-trust ci.pub` takes only signed runs, and on a laptop
 `codeinstances pull -trust ci.pub ...` or `codeinstances verify -trust ci.pub
@@ -134,9 +137,11 @@ run.instance` checks the key before you trust what the run says.
   traffic to real services is. See the README's limits.
 - An instance keeps request and response bodies, URL query strings and the
   command line as they were. Keep the store as private as your CI logs.
-- A signature shows the run was kept by whoever holds the key. Anyone who
+- A signature shows the run was signed by whoever holds the key. Anyone who
   can change the workflow can use the secret too, so it vouches for your CI
-  as far as you trust the people who can edit it.
+  as far as you trust the people who can edit it. Steps in one job share a
+  machine, so a test step that leaves a process running could still reach
+  the signing step; for more, sign in a separate job.
 - On a public repository, the job summary is public too: the report shows
   the last lines of the output and the URLs of failed calls, query strings
   included. Leave the report step out there, or keep the summary to the id.

@@ -347,6 +347,9 @@ func Parse(data []byte) (*Instance, error) {
 	if err := covers(tree, readTree, "instance"); err != nil {
 		return nil, fmt.Errorf("damaged instance file: %w", err)
 	}
+	if err := signatureShape(tree); err != nil {
+		return nil, err
+	}
 	if err := inst.Validate(); err != nil {
 		return nil, err
 	}

@@ -739,6 +739,26 @@ func TestKeygenSignVerify(t *testing.T) {
 		t.Fatalf("pull -trust: %s", e)
 	}
 
+	// A file with a member this version doesn't know isn't signed, since
+	// writing it again would drop the member.
+	var doc map[string]any
+	pdata, _ := os.ReadFile(plain)
+	json.Unmarshal(pdata, &doc)
+	doc["from_a_later_version"] = "kept"
+	delete(doc, "id")
+	future, _ := json.Marshal(doc)
+	fid, _ := instance.ComputeID(future)
+	doc["id"] = fid
+	future, _ = json.Marshal(doc)
+	futureFile := filepath.Join(dir, "future.instance")
+	os.WriteFile(futureFile, future, 0o644)
+	if _, e, code := cli(t, "sign", "-key", other+".key", futureFile); code != 2 || !strings.Contains(e, "doesn't know") {
+		t.Fatalf("signed a file with an unknown member: %d %s", code, e)
+	}
+	if after, _ := os.ReadFile(futureFile); !bytes.Equal(after, future) {
+		t.Fatal("the file was changed")
+	}
+
 	os.Chmod(ci+".key", 0o644)
 	for _, args := range [][]string{
 		{"keygen", "extra"},

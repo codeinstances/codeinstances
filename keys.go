@@ -57,15 +57,16 @@ func ParsePrivateKey(data []byte) (ed25519.PrivateKey, error) {
 	return key, nil
 }
 
-// ReadPrivateKey reads a private key file. On Unix it refuses a file that
-// others can read, as ssh does, since anyone who can read it can sign as you.
+// ReadPrivateKey reads a private key file. Except on Windows, where the
+// mode bits don't say who can read a file, it refuses a file that group or
+// others can read or write, since anyone who can read it can sign as you.
 func ReadPrivateKey(path string) (ed25519.PrivateKey, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil, err
 	}
 	if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
-		return nil, fmt.Errorf("%s: others can read this key (mode %#o); run chmod 600 %s", path, info.Mode().Perm(), path)
+		return nil, fmt.Errorf("%s: other users can read or change this key (mode %#o); run chmod 600 %s", path, info.Mode().Perm(), path)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {

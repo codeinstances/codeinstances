@@ -1,0 +1,74 @@
+{
+  "format": "codeinstances/0",
+  "id": "sha256:387631d9d80e848219c26cbccbb0caa4d8afcbd4cd8d48a632921ee38ec9a282",
+  "created": "2026-10-18T06:21:33.305030177Z",
+  "tool": "codeinstances 0.1.0",
+  "command": {
+    "argv": [
+      "python3",
+      "-c",
+      "import urllib.request;print(urllib.request.urlopen('http://127.0.0.1:8765/status.json').read().decode().strip())"
+    ],
+    "dir": "/tmp/fmtex"
+  },
+  "result": {
+    "exit_code": 0,
+    "duration_ms": 51,
+    "stdout": {
+      "text": "{\"ok\":true}\n"
+    }
+  },
+  "calls": [
+    {
+      "seq": 1,
+      "kind": "http",
+      "at_ms": 42,
+      "request": {
+        "method": "GET",
+        "url": "http://127.0.0.1:8765/status.json",
+        "header": {
+          "Accept-Encoding": [
+            "identity"
+          ],
+          "User-Agent": [
+            "Python-urllib/3.13"
+          ]
+        }
+      },
+      "response": {
+        "status": 200,
+        "header": {
+          "Content-Length": [
+            "12"
+          ],
+          "Content-Type": [
+            "application/json"
+          ],
+          "Date": [
+            "Sun, 18 Oct 2026 06:21:33 GMT"
+          ],
+          "Last-Modified": [
+            "Sun, 18 Oct 2026 04:48:43 GMT"
+          ],
+          "Server": [
+            "SimpleHTTP/0.6 Python/3.13.16"
+          ]
+        },
+        "body": {
+          "text": "{\"ok\":true}\n"
+        }
+      }
+    }
+  ],
+  "values": [],
+  "signatures": [
+    {
+      "alg": "ed25519",
+      "public_key": "ebVWLo/mVPlAeLES6KmLp5AfhTrmlb7X4OORC60ElmQ=",
+      "content": "sha256:38ffd1dae45eb3feef98cbc4aac7377c847a97094218ae515a9ddff97ce3f4c4",
+      "signer": "example",
+      "signed_at": "2026-10-18T12:00:00Z",
+      "signature": "tajA8glO9vEPFZHvP7TcQ5jdGRJ3lMPMYALEqEvkpPW6ePk48z4EyV7+fCGHbKaPKLLSmHLodOulfryal6wwCA=="
+    }
+  ]
+}

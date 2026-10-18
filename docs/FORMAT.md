@@ -156,11 +156,23 @@ signer <signer>
 where `<signer>` is empty when there is no signer. No field may hold a line
 break, so the text reads only one way.
 
+`public_key` and `signature` must be written exactly as standard, padded
+base64 encodes them, with no line breaks and the unused bits zero, and a
+signature object has no members but these six. Otherwise the same signature
+could be spelled several ways, and anyone could give a signed file new bytes
+and a new id. A file holds at most 16 signatures, and in an algorithm this
+version doesn't check, `public_key` and `signature` are at most 16 KiB each.
+
 A reader checks every `ed25519` signature: its `content` must be the file's
 content id, and the signature must verify with its `public_key`. A file with
 one that doesn't check out is refused, like a file whose id doesn't match.
 Two signatures by the same key are refused too. A signature with another
-`alg` is left as it is and not checked, so a later version can add one.
+`alg` is left as it is and not checked, so a later version can add one; it
+proves nothing, and anyone can add one.
+
+What a signature fixes is the content id. The file's id can still change
+without the key: a signature can be taken off, or an entry in another
+algorithm added. So to name a signed run, use its content id.
 
 What a valid signature shows is that the key's holder signed this content;
 `signer` and `signed_at` are what they said, not checked facts. Whether the
@@ -169,6 +181,13 @@ keys (codeinstances reads trust files, one `codeinstances-ed25519 <base64 key>
 <label>` line per key). And since a signature can be taken off a file as
 easily as an id can be recomputed, a missing signature is only noticed by a
 reader that requires one.
+
+### A signed example
+
+[example-signed.instance](example-signed.instance) is the example above
+signed by the key whose Ed25519 seed is the 32 bytes 1, 2, 3 and so on up to
+32, as `"example"` at `2026-10-18T12:00:00Z`. Its content id is the example's
+id. The same file is a test in `instance/sign_test.go`.
 
 ### A test vector
 
