@@ -244,3 +244,101 @@ func TestDocumentedExample(t *testing.T) {
 		t.Fatalf("%+v", inst.Calls)
 	}
 }
+
+// A fixed input and its canonical form, also printed in docs/FORMAT.md, so
+// other implementations can check themselves.
+const goldenInput = "{ \"id\": \"sha256:x\", \"b\": [1.0, -0, 1e2, true, null],\n  \"a\": \"q\\\"\\\\/\\b\\f\\n\\r\\t\\u0001\\u001f\\u2028\\u2029\\u00e9\\ud83d\\ude00<>&\x7f\" }"
+
+const goldenCanonical = `{"a":"q\"\\/\b\f\n\r\t` + "\\u0001\\u001f\\u2028\\u2029é\U0001F600<>&\x7f" + `","b":[1.0,-0,1e2,true,null]}`
+
+func TestCanonicalGoldenVector(t *testing.T) {
+	got, err := Canonical([]byte(goldenInput))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != goldenCanonical {
+		t.Fatalf("canonical\n got %s\nwant %s", got, goldenCanonical)
+	}
+	id, _ := ComputeID([]byte(goldenInput))
+	t.Logf("golden id %s", id)
+	if id != goldenID {
+		t.Fatalf("id %s, want %s", id, goldenID)
+	}
+}
+
+func TestStrictJSON(t *testing.T) {
+	bad := map[string]string{
+		"invalid UTF-8":    "{\"a\":\"\xff\"}",
+		"lone high":        `{"a":"\ud800"}`,
+		"lone low":         `{"a":"\udc00x"}`,
+		"high then text":   `{"a":"\ud800A"}`,
+		"duplicate":        `{"a":1,"a":2}`,
+		"nested duplicate": `{"x":{"b":1,"b":1}}`,
+		"raw control char": "{\"a\":\"\x01\"}",
+		"leading zero":     `{"a":01}`,
+		"bare dot":         `{"a":1.}`,
+		"trailing comma":   `{"a":1,}`,
+		"single quote":     `{'a':1}`,
+		"not an object":    `[1]`,
+		"bad escape":       `{"a":"\x"}`,
+		"deep":             strings.Repeat("[", 300) + strings.Repeat("]", 300),
+		"truncated escape": `{"a":"\u12`,
+	}
+	for name, in := range bad {
+		if _, err := Canonical([]byte(in)); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}
+
+func TestDuplicateAndCaseVariantMembersAreRefused(t *testing.T) {
+	data, _ := Marshal(sample())
+	// A second exit_code with the id recomputed still fails: the parser
+	// refuses repeated names.
+	dup := bytes.Replace(data, []byte(`"exit_code": 3`), []byte(`"exit_code": 5, "exit_code": 3`), 1)
+	if _, err := Parse(dup); err == nil {
+		t.Fatal("duplicate member accepted")
+	}
+	// A member in another case, with a correct id, would be read by Go but
+	// not by a reader following the spec.
+	upper := bytes.Replace(data, []byte(`"exit_code": 3`), []byte(`"EXIT_CODE": 3`), 1)
+	id, err := ComputeID(upper)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	json.Unmarshal(upper, &doc)
+	upper = bytes.Replace(upper, []byte(sample0ID(data)), []byte(id), 1)
+	if err := VerifyBytes(upper); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	if _, err := Parse(upper); err == nil || !strings.Contains(err.Error(), "spelled") {
+		t.Fatalf("case variant: %v", err)
+	}
+}
+
+func sample0ID(data []byte) string {
+	var head struct {
+		ID string `json:"id"`
+	}
+	json.Unmarshal(data, &head)
+	return head.ID
+}
+
+const goldenID = "sha256:867e3f2918e007a08fcd836396ab7cfd4335a1658e564fc0cdb2f585b2508229"
+
+func TestValidateBodiesAndValues(t *testing.T) {
+	for n, f := range []func(*Instance){
+		func(i *Instance) { i.Result.Stdout = &Body{} },
+		func(i *Instance) { i.Calls[0].Response.Body = &Body{} },
+		func(i *Instance) { i.Values[0].Value = "yesterday" },
+		func(i *Instance) { i.Values[1].Value = "-1" },
+		func(i *Instance) { i.Values = append(i.Values, Value{Seq: 3, Kind: ValueBytes, Value: "%%"}) },
+	} {
+		in := sample()
+		f(in)
+		if err := in.Validate(); err == nil {
+			t.Errorf("case %d: valid", n)
+		}
+	}
+}

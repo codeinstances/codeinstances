@@ -416,3 +416,10 @@ func TestEnvironmentForTheProgram(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+func TestDedupeKeepsDriveEntries(t *testing.T) {
+	got := dedupe([]string{"=C:=C:\\a", "=D:=D:\\b", "A=1", "A=2"})
+	if strings.Join(got, "|") != "=C:=C:\\a|=D:=D:\\b|A=2" {
+		t.Fatal(got)
+	}
+}

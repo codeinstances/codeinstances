@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -155,28 +156,33 @@ func (b *Body) MustBytes() []byte {
 	return out
 }
 
-// Canonical returns the bytes the id is the hash of: the file's JSON with
-// the "id" member removed, object keys sorted, no whitespace between tokens,
-// numbers exactly as written, and strings escaped minimally (only quote,
-// backslash and control characters, plus U+2028 and U+2029).
+// Canonical returns the bytes the id is the hash of, by the rules in
+// docs/FORMAT.md: the file's JSON with the top-level "id" member removed,
+// member names sorted by their UTF-8 bytes, no whitespace between tokens,
+// numbers exactly as written, and strings escaped only where they must be.
+// Files that aren't valid UTF-8, hold unpaired surrogate escapes or repeat a
+// member name in one object are refused.
 func Canonical(data []byte) ([]byte, error) {
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.UseNumber()
-	var doc map[string]any
-	if err := dec.Decode(&doc); err != nil {
+	v, err := parseJSON(data)
+	if err != nil {
 		return nil, err
 	}
-	if dec.More() {
-		return nil, errors.New("data after the JSON document")
+	if v.kind != jobj {
+		return nil, errors.New("not a JSON object")
 	}
-	delete(doc, "id")
+	if _, ok := v.items["id"]; ok {
+		delete(v.items, "id")
+		keys := v.keys[:0:0]
+		for _, k := range v.keys {
+			if k != "id" {
+				keys = append(keys, k)
+			}
+		}
+		v.keys = keys
+	}
 	var out bytes.Buffer
-	enc := json.NewEncoder(&out)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(doc); err != nil {
-		return nil, err
-	}
-	return bytes.TrimSuffix(out.Bytes(), []byte("\n")), nil
+	writeCanonical(&out, v)
+	return out.Bytes(), nil
 }
 
 // ComputeID returns "sha256:" and the hex SHA-256 of Canonical(data).
@@ -277,17 +283,19 @@ func Load(path string) (*Instance, error) {
 
 // Parse is Load for bytes already read.
 func Parse(data []byte) (*Instance, error) {
-	var head struct {
-		Format string `json:"format"`
-	}
-	if err := json.Unmarshal(data, &head); err != nil {
+	tree, err := parseJSON(data)
+	if err != nil {
 		return nil, fmt.Errorf("not an instance file: %w", err)
 	}
-	if head.Format != Format {
-		if head.Format == "" {
-			return nil, errors.New("not an instance file: no format")
-		}
-		return nil, fmt.Errorf("unsupported format %q (this version reads %q)", head.Format, Format)
+	if tree.kind != jobj {
+		return nil, errors.New("not an instance file: not a JSON object")
+	}
+	format, ok := tree.items["format"]
+	if !ok || format.kind != jstr || format.s == "" {
+		return nil, errors.New("not an instance file: no format")
+	}
+	if format.s != Format {
+		return nil, fmt.Errorf("unsupported format %q (this version reads %q)", format.s, Format)
 	}
 	var inst Instance
 	if err := json.Unmarshal(data, &inst); err != nil {
@@ -295,6 +303,20 @@ func Parse(data []byte) (*Instance, error) {
 	}
 	if err := VerifyBytes(data); err != nil {
 		return nil, err
+	}
+	// What Go read into the struct must be exactly what the file says, so a
+	// member spelled in another case can't be read one way here and another
+	// way elsewhere.
+	read, err := encode(&inst)
+	if err != nil {
+		return nil, err
+	}
+	readTree, err := parseJSON(read)
+	if err != nil {
+		return nil, err
+	}
+	if err := covers(tree, readTree, "instance"); err != nil {
+		return nil, fmt.Errorf("damaged instance file: %w", err)
 	}
 	if err := inst.Validate(); err != nil {
 		return nil, err
@@ -308,23 +330,30 @@ var ErrModified = errors.New("the file was changed after it was recorded: its id
 
 // VerifyBytes checks that the id in the file is the hash of its contents.
 func VerifyBytes(data []byte) error {
-	var head struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(data, &head); err != nil {
+	tree, err := parseJSON(data)
+	if err != nil {
 		return err
 	}
-	if head.ID == "" {
+	id, ok := tree.items["id"]
+	if tree.kind != jobj || !ok || id.kind != jstr || id.s == "" {
 		return errors.New("the file has no id")
 	}
 	want, err := ComputeID(data)
 	if err != nil {
 		return err
 	}
-	if head.ID != want {
+	if id.s != want {
 		return ErrModified
 	}
 	return nil
+}
+
+func (b *Body) check() error {
+	if b != nil && b.Text == "" && b.Base64 == "" {
+		return errors.New("an empty body is left out, not written as {}")
+	}
+	_, err := b.Bytes()
+	return err
 }
 
 // Validate checks the instance's own consistency.
@@ -333,7 +362,7 @@ func (inst *Instance) Validate() error {
 		return errors.New("instance has no command")
 	}
 	for _, b := range []*Body{inst.Result.Stdout, inst.Result.Stderr} {
-		if _, err := b.Bytes(); err != nil {
+		if err := b.check(); err != nil {
 			return fmt.Errorf("result: %w", err)
 		}
 	}
@@ -349,7 +378,7 @@ func (inst *Instance) Validate() error {
 		if c.Request.Method == "" || c.Request.URL == "" {
 			return fmt.Errorf("call %d: request has no method or URL", c.Seq)
 		}
-		if _, err := c.Request.Body.Bytes(); err != nil {
+		if err := c.Request.Body.check(); err != nil {
 			return fmt.Errorf("call %d request: %w", c.Seq, err)
 		}
 		if (c.Response == nil) == (c.Error == "") {
@@ -359,7 +388,7 @@ func (inst *Instance) Validate() error {
 			if c.Response.Status < 100 || c.Response.Status > 999 {
 				return fmt.Errorf("call %d: status %d", c.Seq, c.Response.Status)
 			}
-			if _, err := c.Response.Body.Bytes(); err != nil {
+			if err := c.Response.Body.check(); err != nil {
 				return fmt.Errorf("call %d response: %w", c.Seq, err)
 			}
 		}
@@ -370,10 +399,19 @@ func (inst *Instance) Validate() error {
 			return fmt.Errorf("value %d: seq %d isn't above %d", i, v.Seq, last)
 		}
 		last = v.Seq
+		var err error
 		switch v.Kind {
-		case ValueClock, ValueRandom, ValueBytes:
+		case ValueClock:
+			_, err = time.Parse(time.RFC3339Nano, v.Value)
+		case ValueRandom:
+			_, err = strconv.ParseUint(v.Value, 10, 64)
+		case ValueBytes:
+			_, err = base64.StdEncoding.DecodeString(v.Value)
 		default:
 			return fmt.Errorf("value %d: unknown kind %q", v.Seq, v.Kind)
+		}
+		if err != nil {
+			return fmt.Errorf("value %d: not a %s value: %v", v.Seq, v.Kind, err)
 		}
 	}
 	return nil

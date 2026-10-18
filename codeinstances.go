@@ -24,6 +24,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -268,23 +269,33 @@ func run(ctx context.Context, s runSpec) (instance.Result, error) {
 	return res, nil
 }
 
+// envName is how the system compares variable names: Windows ignores case.
+func envName(k string) string {
+	if runtime.GOOS == "windows" {
+		return strings.ToUpper(k)
+	}
+	return k
+}
+
 func environment(s runSpec, caFile string) []string {
 	skip := map[string]bool{}
 	for _, k := range proxyVars {
+		// Proxy variables are cleared in either case on every system.
 		skip[strings.ToUpper(k)] = true
 	}
 	for _, k := range []string{hook.EnvMode, hook.EnvValuesIn, hook.EnvValuesOut, hook.EnvCA} {
-		skip[k] = true
+		skip[envName(k)] = true
 	}
 	for k := range s.env {
-		skip[strings.ToUpper(k)] = true
+		skip[envName(k)] = true
 	}
 	var env []string
 	for _, kv := range os.Environ() {
 		k, _, _ := strings.Cut(kv, "=")
-		if !skip[strings.ToUpper(k)] {
-			env = append(env, kv)
+		if isProxyVar(k) || skip[envName(k)] {
+			continue
 		}
+		env = append(env, kv)
 	}
 	for k, v := range s.env {
 		env = append(env, k+"="+v)
@@ -308,12 +319,27 @@ func environment(s runSpec, caFile string) []string {
 	return dedupe(env)
 }
 
-// dedupe keeps the last setting of each variable.
+func isProxyVar(k string) bool {
+	for _, p := range proxyVars {
+		if strings.EqualFold(k, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// dedupe keeps the last setting of each variable. Windows' per-drive
+// entries ("=C:=C:\\dir") start with "=" and are kept as they are.
 func dedupe(env []string) []string {
 	seen := map[string]int{}
 	var out []string
 	for _, kv := range env {
+		if strings.HasPrefix(kv, "=") {
+			out = append(out, kv)
+			continue
+		}
 		k, _, _ := strings.Cut(kv, "=")
+		k = envName(k)
 		if i, ok := seen[k]; ok {
 			out[i] = kv
 			continue

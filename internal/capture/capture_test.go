@@ -336,7 +336,9 @@ func TestStrictOrder(t *testing.T) {
 	if code, _, _ := do(t, rc, "GET", "https://secure.test/second", ""); code != http.StatusBadGateway {
 		t.Fatal("out of order answered")
 	}
-	if d := rp.Divergences(); len(d) != 3 || !strings.Contains(d[0], "request 1 was GET https://secure.test/second") {
+	do(t, rc, "GET", "https://secure.test/second", "")
+	d := rp.Divergences()
+	if len(d) != 4 || !strings.Contains(d[0], "request 1 was GET https://secure.test/second") || !strings.Contains(d[1], "request 2 was") {
 		t.Fatalf("%q", d)
 	}
 }
@@ -361,22 +363,60 @@ func TestLargeBodies(t *testing.T) {
 	}
 }
 
-func TestTooLargeBodyFailsThatExchange(t *testing.T) {
+func TestTooLargeBodyIsKeptAsAFailedCallAndReplayed(t *testing.T) {
 	u := newUpstream(t)
 	p := u.record(t, false)
 	c := client(p, p.auth)
 	huge := strings.Repeat("z", MaxBody+1)
-	req, _ := http.NewRequest("POST", "http://plain.test/huge", strings.NewReader(huge))
+	send := func(c *http.Client) (int, string) {
+		resp, err := c.Post("http://plain.test/huge", "text/plain", strings.NewReader(huge))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(b)
+	}
+	code, body := send(c)
+	p.Close()
+	calls := p.Calls()
+	if code != http.StatusBadGateway || len(calls) != 1 || calls[0].Error != ErrRequestTooLarge || calls[0].Request.Body != nil {
+		t.Fatalf("%d %+v", code, calls)
+	}
+	if u.hits.Load() != 0 {
+		t.Fatal("the oversize request reached the server")
+	}
+	rp, rc := replay(t, calls, false)
+	code2, body2 := send(rc)
+	if code2 != code || body2 != body || len(rp.Divergences()) != 0 {
+		t.Fatalf("replayed %d %q %v", code2, body2, rp.Divergences())
+	}
+}
+
+func TestRecordedRequestsLeaveOutConnectionHeaders(t *testing.T) {
+	u := newUpstream(t)
+	p := u.record(t, false)
+	c := client(p, p.auth)
+	req, _ := http.NewRequest("GET", "http://plain.test/x", nil)
+	req.Header.Set("Connection", "close, X-Private")
+	req.Header.Set("X-Private", "1")
+	req.Header.Set("Proxy-Connection", "Keep-Alive")
+	req.Header.Set("Expect", "100-continue")
+	req.Header.Set("X-Kept", "yes")
 	resp, err := c.Do(req)
-	if err == nil {
-		resp.Body.Close()
-		if resp.StatusCode != http.StatusRequestEntityTooLarge {
-			t.Fatalf("status %d", resp.StatusCode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	p.Close()
+	h := p.Calls()[0].Request.Header
+	for _, name := range []string{"Connection", "X-Private", "Proxy-Connection"} {
+		if _, ok := h[name]; ok {
+			t.Errorf("%s kept", name)
 		}
 	}
-	p.Close()
-	if len(p.Calls()) != 0 || len(p.Divergences()) != 1 {
-		t.Fatalf("calls %d, notes %v", len(p.Calls()), p.Divergences())
+	if h["X-Kept"][0] != "yes" {
+		t.Fatal("ordinary header lost")
 	}
 }
 

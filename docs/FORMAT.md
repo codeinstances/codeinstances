@@ -9,9 +9,12 @@ fetched a small JSON file over HTTP.
 
 ## The file
 
-One JSON object, UTF-8. The suggested extension is `.instance`. Readers must
-ignore members they don't know, and must refuse a file whose `format` isn't a
-version they read.
+One JSON object in valid UTF-8. The suggested extension is `.instance`. No
+object may hold the same member name twice, and `\u` escapes must form whole
+characters (no unpaired surrogates). Readers must ignore members they don't
+know, must refuse a file whose `format` isn't a version they read, and should
+refuse a file where a member of this format is spelled in another case
+(`EXIT_CODE` for `exit_code`), since readers would disagree on what it says.
 
 | Member | Type | What it holds |
 |---|---|---|
@@ -38,9 +41,9 @@ The rest of the environment is not kept, because it often holds secrets.
 
 | Member | Type | |
 |---|---|---|
-| `exit_code` | integer | The exit code; -1 when the program was killed by a signal |
-| `signal` | string, optional | The signal that killed it, such as `"killed"` |
-| `timed_out` | boolean, optional | The recorder killed it at its time limit |
+| `exit_code` | integer | The exit code; -1 when the program was killed by a signal (on Windows a program stopped at its time limit has 1) |
+| `signal` | string, optional | The signal that killed it, by Go's name for it: `"killed"` for SIGKILL, `"terminated"` for SIGTERM, `"interrupt"` for SIGINT |
+| `timed_out` | boolean, optional | The recorder stopped it at its time limit |
 | `duration_ms` | integer | Wall time from start to exit |
 | `stdout`, `stderr` | body, optional | What it printed. Absent when nothing was printed |
 | `stdout_truncated`, `stderr_truncated` | boolean, optional | Only the first part was kept (codeinstances keeps 16 MiB of each) |
@@ -56,9 +59,14 @@ Each element is one exchange. Version 0 has one kind, `"http"`.
 | `at_ms` | integer | When the request arrived, in milliseconds since the run started |
 | `request` | object | `method`, `url`, optional `header` and `body` |
 | `response` | object | `status`, optional `header` and `body` |
-| `error` | string | Set instead of `response` when no answer came back |
+| `error` | string | Set instead of `response` when the exchange failed; see below |
 
-Exactly one of `response` and `error` is present.
+Exactly one of `response` and `error` is present. An `error` means the
+program got a 502 from the recorder instead of the server's answer: when no
+answer came back (the connection was refused, say), when the request was a
+protocol upgrade such as WebSocket, or when the request body was over 64 MiB.
+In that last case the request was never sent, its body isn't kept, and the
+error reads "the request body was bigger than 64 MiB, so it wasn't sent".
 
 `url` is absolute: scheme, lowercase host, the port only when it isn't the
 scheme's default, path and query, as in `https://api.example.com/v1/items?page=2`.
@@ -80,9 +88,9 @@ are replaced with `"[redacted]"`. Bodies are kept as they were.
 
 ### body
 
-An object with exactly one member: `text` when the bytes are valid UTF-8,
-otherwise `base64` (standard alphabet, with padding). An empty body is left
-out rather than written as an empty object.
+An object with exactly one member, never empty: `text` when the bytes are
+valid UTF-8, otherwise `base64` (standard alphabet, with padding). An empty
+body is left out rather than written as `{}`.
 
 ## The id
 
@@ -94,9 +102,12 @@ form, which is:
 2. object members sorted by name (by UTF-8 bytes), at every level,
 3. no whitespace between tokens,
 4. numbers exactly as written in the file,
-5. strings escaped minimally: `\"`, `\\`, the control characters U+0000 to
-   U+001F (as `\n`, `\r`, `\t` or `\u00XX`), and U+2028 and U+2029 as `\u2028`
-   and `\u2029`; everything else as it is.
+5. strings escaped only where they must be: `\"` and `\\`; the control
+   characters U+0008, U+000C, U+000A, U+000D and U+0009 as `\b`, `\f`, `\n`,
+   `\r` and `\t`; the other control characters U+0000 to U+001F as `\u00xx`
+   with lowercase hex; U+2028 and U+2029 as `\u2028` and `\u2029`; everything
+   else, including `/`, DEL and every non-ASCII character, as the character
+   itself in UTF-8.
 
 Whitespace and member order in the file don't change the id; any change to a
 value or an added member does. `codeinstances verify` checks it.
@@ -104,6 +115,26 @@ value or an added member does. `codeinstances verify` checks it.
 The id shows a file was changed. It doesn't show who made it: anyone can
 change a file and write a new id. Signed instances are on the plan for a later
 version.
+
+### A test vector
+
+This input, where the string `a` also ends with a DEL character (U+007F)
+right after `&` that doesn't show here, and whose `id` doesn't matter since
+it is removed:
+
+```
+{ "id": "sha256:x", "b": [1.0, -0, 1e2, true, null],
+  "a": "q\"\\/\b\f\n\r\t\u0001\u001f\u2028\u2029\u00e9\ud83d\ude00<>&" }
+```
+
+has this canonical form, with the DEL kept as it is after `&`:
+
+```
+{"a":"q\"\\/\b\f\n\r\t\u0001\u001f\u2028\u2029é😀<>&","b":[1.0,-0,1e2,true,null]}
+```
+
+and the id `sha256:867e3f2918e007a08fcd836396ab7cfd4335a1658e564fc0cdb2f585b2508229`.
+The same vector is a test in `instance/instance_test.go`.
 
 ## How replay uses a file
 

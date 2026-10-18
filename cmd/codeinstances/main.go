@@ -231,13 +231,18 @@ func show(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "usage: codeinstances show [-json] file")
 		return 2
 	}
-	inst, err := instance.Load(fs.Arg(0))
+	data, err := os.ReadFile(fs.Arg(0))
 	if err != nil {
 		fmt.Fprintf(stderr, "codeinstances show: %v\n", err)
 		return 2
 	}
+	inst, err := instance.Parse(data)
+	if err != nil {
+		fmt.Fprintf(stderr, "codeinstances show: %s: %v\n", fs.Arg(0), err)
+		return 2
+	}
 	if *asJSON {
-		data, _ := instance.Marshal(inst)
+		// The file as it is, so its id still verifies.
 		stdout.Write(data)
 		return 0
 	}

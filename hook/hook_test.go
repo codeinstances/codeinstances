@@ -186,3 +186,20 @@ func TestIntnPanicsOnZero(t *testing.T) {
 	}()
 	hook.Intn(0)
 }
+
+func TestReplayedBytesOfAnotherLengthAreNotUsed(t *testing.T) {
+	dir := t.TempDir()
+	in := filepath.Join(dir, "in")
+	// Eight bytes recorded; the helper asks for twelve.
+	os.WriteFile(in, []byte(`{"kind":"bytes","value":"AAAAAAAAAAA="}`+"\n"), 0o600)
+	out := filepath.Join(dir, "out")
+	got := runHelper(t, "CODEINSTANCES_MODE=replay", "CODEINSTANCES_VALUES_IN="+in, "CODEINSTANCES_VALUES_OUT="+out)
+	if !strings.HasPrefix(got[6], "12 <nil>") || strings.HasSuffix(got[6], "000000000000000000000000") {
+		t.Fatal(got[6])
+	}
+	for _, l := range readLines(t, out) {
+		if l.Kind == "bytes" && !l.Live {
+			t.Fatal("a recorded value of the wrong length was used")
+		}
+	}
+}

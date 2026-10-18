@@ -262,3 +262,12 @@ func TestQuoteArgs(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+func TestShowJSONIsTheFileItself(t *testing.T) {
+	file := filepath.Join("..", "..", "docs", "example.instance")
+	data, _ := os.ReadFile(file)
+	out, _, code := cli(t, "show", "-json", file)
+	if code != 0 || out != string(data) {
+		t.Fatal("show -json changed the file")
+	}
+}

@@ -101,6 +101,7 @@ type Proxy struct {
 	calls       []instance.Call
 	divergences []string
 	served      int
+	requests    int
 
 	ln      net.Listener
 	srv     *http.Server
@@ -166,7 +167,7 @@ func StartReplay(cfg ReplayConfig) (*Proxy, error) {
 		strict:   cfg.Strict,
 	}
 	for i, c := range cfg.Calls {
-		k := key(c.Request.Method, c.Request.URL, c.Request.Body.MustBytes())
+		k := callKey(c)
 		p.queues[k] = append(p.queues[k], i)
 	}
 	return p, p.listen()
@@ -366,22 +367,40 @@ func (p *Proxy) exchange(w http.ResponseWriter, r *http.Request, target string) 
 	}()
 	at := time.Since(p.start).Milliseconds()
 	body, err := readLimited(r.Body)
-	if err != nil {
-		http.Error(w, "codeinstances: request body: "+err.Error(), http.StatusRequestEntityTooLarge)
-		p.note(fmt.Sprintf("%s %s: request body not kept: %v", r.Method, target, err))
+	tooLarge := err != nil
+	if p.replay {
+		k := key(r.Method, target, body)
+		if tooLarge {
+			k = tooLargeKey(r.Method, target)
+		}
+		p.answer(w, r.Method, target, k)
 		return
 	}
-	if p.replay {
-		p.answer(w, r.Method, target, body)
+	if tooLarge {
+		// Kept as a call that failed, so a replay fails it the same way.
+		p.mu.Lock()
+		p.seq++
+		call := instance.Call{Seq: p.seq, Kind: instance.KindHTTP, AtMS: at, Error: ErrRequestTooLarge,
+			Request: instance.Request{Method: r.Method, URL: target, Header: p.keep(passable(r.Header))}}
+		p.calls = append(p.calls, call)
+		p.mu.Unlock()
+		writeError(w, call.Error)
 		return
 	}
 	p.forward(w, r, target, body, at)
 }
 
-func (p *Proxy) note(msg string) {
-	p.mu.Lock()
-	p.divergences = append(p.divergences, msg)
-	p.mu.Unlock()
+// ErrRequestTooLarge is the error kept for a request whose body was over
+// MaxBody. Its body isn't kept, and replay matches it by method and URL.
+var ErrRequestTooLarge = fmt.Sprintf("the request body was bigger than %d MiB, so it wasn't sent", MaxBody>>20)
+
+func tooLargeKey(method, target string) string { return method + " " + target + " too-large" }
+
+func callKey(c instance.Call) string {
+	if c.Error == ErrRequestTooLarge {
+		return tooLargeKey(c.Request.Method, c.Request.URL)
+	}
+	return key(c.Request.Method, c.Request.URL, c.Request.Body.MustBytes())
 }
 
 // forward passes the request on, keeps the exchange, and returns the answer.
@@ -390,7 +409,7 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, target string, b
 	p.seq++
 	call := instance.Call{Seq: p.seq, Kind: instance.KindHTTP, AtMS: at}
 	p.mu.Unlock()
-	call.Request = instance.Request{Method: r.Method, URL: target, Header: p.keep(r.Header), Body: instance.NewBody(body)}
+	call.Request = instance.Request{Method: r.Method, URL: target, Header: p.keep(passable(r.Header)), Body: instance.NewBody(body)}
 	defer func() {
 		p.mu.Lock()
 		p.calls = append(p.calls, call)
@@ -409,6 +428,8 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, target string, b
 		return
 	}
 	out.Header = passable(r.Header)
+	// The body is already here, so there is nothing to wait for.
+	out.Header.Del("Expect")
 	out.Host = r.Host
 	if _, ok := out.Header["User-Agent"]; !ok {
 		// An empty value stops Go adding its own User-Agent.
@@ -433,18 +454,18 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, target string, b
 }
 
 // answer serves a replayed request from the recording.
-func (p *Proxy) answer(w http.ResponseWriter, method, target string, body []byte) {
-	k := key(method, target, body)
+func (p *Proxy) answer(w http.ResponseWriter, method, target, k string) {
 	p.mu.Lock()
+	p.requests++
 	idx := -1
 	if p.strict {
 		if p.next < len(p.recorded) {
 			c := p.recorded[p.next]
-			if key(c.Request.Method, c.Request.URL, c.Request.Body.MustBytes()) == k {
+			if callKey(c) == k {
 				idx = p.next
 				p.next++
 			} else {
-				p.divergences = append(p.divergences, fmt.Sprintf("request %d was %s %s, but the recording has %s %s", p.next+1, method, target, c.Request.Method, c.Request.URL))
+				p.divergences = append(p.divergences, fmt.Sprintf("request %d was %s %s, but the next in the recording is %s %s", p.requests, method, target, c.Request.Method, c.Request.URL))
 			}
 		} else {
 			p.divergences = append(p.divergences, fmt.Sprintf("extra request %s %s after the %d recorded", method, target, len(p.recorded)))

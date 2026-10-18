@@ -89,9 +89,9 @@ func Active() bool {
 	return mode != ""
 }
 
-// value hands out the next value of a kind: the recorded one when replaying,
-// otherwise the one live makes; and notes it.
-func value(kind string, live func() string) string {
+// value hands out the next value of a kind: the recorded one when replaying
+// (if fits accepts it), otherwise the one live makes; and notes it.
+func value(kind string, live func() string, fits func(string) bool) string {
 	once.Do(setup)
 	if mode == "" {
 		return live()
@@ -99,10 +99,15 @@ func value(kind string, live func() string) string {
 	mu.Lock()
 	defer mu.Unlock()
 	l := Line{Kind: kind}
-	if q := queues[kind]; mode == "replay" && len(q) > 0 {
+	if q := queues[kind]; mode == "replay" && len(q) > 0 && (fits == nil || fits(q[0])) {
 		l.Value = q[0]
 		queues[kind] = q[1:]
 	} else {
+		if mode == "replay" && len(q) > 0 {
+			// The recorded value doesn't fit this request; it is used up
+			// and a live one handed out instead.
+			queues[kind] = q[1:]
+		}
 		l.Value = live()
 		l.Live = mode == "replay"
 	}
@@ -117,7 +122,7 @@ func value(kind string, live func() string) string {
 // monotonic reading, so the same instant prints the same way in a recording
 // and in its replay.
 func Now() time.Time {
-	s := value("clock", func() string { return time.Now().Round(0).Format(time.RFC3339Nano) })
+	s := value("clock", func() string { return time.Now().Round(0).Format(time.RFC3339Nano) }, nil)
 	t, err := time.Parse(time.RFC3339Nano, s)
 	if err != nil {
 		return time.Now().Round(0)
@@ -134,7 +139,7 @@ func Uint64() uint64 {
 		var b [8]byte
 		rand.Read(b[:])
 		return strconv.FormatUint(binary.LittleEndian.Uint64(b[:]), 10)
-	})
+	}, nil)
 	n, _ := strconv.ParseUint(s, 10, 64)
 	return n
 }
@@ -153,12 +158,17 @@ func Intn(n int) int {
 // Float64 returns a random float64 in [0.0, 1.0).
 func Float64() float64 { return float64(Uint64()>>11) / (1 << 53) }
 
-// Read fills p with random bytes, recorded or replayed as one value.
+// Read fills p with random bytes, recorded or replayed as one value. A
+// recorded value of another length isn't used: replay hands out live bytes
+// and reports the difference.
 func Read(p []byte) (int, error) {
 	s := value("bytes", func() string {
 		b := make([]byte, len(p))
 		rand.Read(b)
 		return base64.StdEncoding.EncodeToString(b)
+	}, func(rec string) bool {
+		b, err := base64.StdEncoding.DecodeString(rec)
+		return err == nil && len(b) == len(p)
 	})
 	b, err := base64.StdEncoding.DecodeString(s)
 	if err != nil {

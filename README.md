@@ -50,7 +50,8 @@ codeinstances record -o weather.instance -- python3 fetch_weather.py
 
 Its output passes through as usual, and the run is kept in `weather.instance`.
 `codeinstances record` exits with the program's own exit code, so it drops
-into scripts and CI unchanged.
+into scripts and CI unchanged. (A program that exits 2 is then hard to tell
+from a usage error; the instance file is there either way.)
 
 ```sh
 codeinstances show weather.instance      # what ran, how it ended, every call
@@ -73,7 +74,13 @@ codeinstances: replay diverged in 2 ways:
   - recorded call 2 (GET https://api.example.com/v1/forecast) was never made
 ```
 
-`replay` exits 0 when the run matched and 1 when it diverged. To check a fix
+`replay` exits 0 when the run matched and 1 when it diverged.
+
+Replay runs the command stored in the file. Treat an instance from someone
+else like a script from someone else: run `codeinstances show` on it first to
+see what it will run, or give your own command after `--`.
+
+To check a fix
 against a recorded failure, replay a different command against the same file:
 
 ```sh
@@ -210,8 +217,20 @@ Ctrl-C reaching the program while the recorder finishes.
 - Programs that pin certificates won't accept the run's authority.
 - On macOS and Windows, Go ignores `SSL_CERT_FILE`, so a Go program needs
   `hook.Client()` (or `hook.Transport()`) for HTTPS.
-- Secrets inside bodies aren't redacted.
+- Only header values are redacted. Secrets in bodies, in URL query strings
+  (an `api_key=` parameter, say) and in the command line are kept as they
+  are, and so are bytes from `hook.Read`, which may be keys.
+- Replay hands the program the redacted values, so a program that prints a
+  cookie it was sent will diverge.
+- Each process that uses the hook package replays the recorded values from
+  the start, so values are recorded and replayed exactly for one hooked
+  process at a time.
 - Output is kept up to 16 MiB per stream.
+- Replay has no time limit unless you give `-timeout`, so give one when
+  replaying a run that timed out.
+- The recording proxy listens on a loopback port with no password while the
+  program runs, so other programs on the same machine could send traffic
+  through it.
 
 ## Where it goes next
 
