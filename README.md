@@ -185,16 +185,18 @@ report to stdout; any failed check makes it exit 1.
 the release smoke check, and writes them to [test/results](test/results). From
 the latest recording, on a 2-CPU Linux machine (details in the files):
 
-- 51 Go tests pass, and the race detector finds nothing
+- 59 Go tests pass, and the race detector finds nothing
   ([tests.txt](test/results/tests.txt), [race.txt](test/results/race.txt)).
-- The demo's 11 checks pass. Recording the 23 calls took 55 ms; the 10 offline
-  replays took 26 to 35 ms each; the instance file was 20,066 bytes
+- The demo's 11 checks pass. Recording the 23 calls took 46 ms; the 10 offline
+  replays took 26 to 45 ms each; the instance file was 20,061 bytes
   ([demo.json](test/results/demo.json)).
 - The smoke check passes on release-style binaries, including recording and
   replaying a Python program that knows nothing of CodeInstances
   ([smoke.txt](test/results/smoke.txt)).
 
-The tests cover the format (round trips, the id catching edits, atomic saves),
+The tests cover the format (round trips, the id catching edits, a published
+test vector for the id, files with repeated or misspelled members refused,
+atomic saves),
 the proxy (HTTPS and HTTP replayed with the servers shut down, 64 concurrent
 requests replayed three times, strict order, 4 and 8 MiB bodies, redaction,
 upstream errors replayed as the same 502), changed programs (an extra request,
