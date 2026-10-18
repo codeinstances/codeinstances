@@ -444,10 +444,10 @@ func TestGroup(t *testing.T) {
 	o, _, code := cli(t, "group", dir)
 	for _, want := range []string{
 		"codeinstances: 8 failing runs in 2 groups (1 run passed)",
-		"1. 7 runs  fp:", "2026-10-18 06:00 UTC to 2026-10-18 06:06 UTC",
-		"   ended  exit 1\n   error  request <n> timed out after <n>ms\n",
+		"1. 7 runs  fp1:", "2026-10-18 06:00 UTC to 2026-10-18 06:06 UTC",
+		"   ended  exit 1\n   error  request <n> timed out after <duration>\n",
 		"... and 2 more (-v lists them)",
-		"2. 1 run  fp:", "   error  panic: nil map\n          at main.main\n",
+		"2. 1 run  fp1:", "   error  panic: nil map\n          at main.main\n",
 	} {
 		if code != 0 || !strings.Contains(o, want) {
 			t.Fatalf("lacks %q (exit %d):\n%s", want, code, o)
@@ -462,7 +462,7 @@ func TestGroup(t *testing.T) {
 		t.Fatalf("%d %s", code, o)
 	}
 	o, _, _ = cli(t, "show", filepath.Join(dir, "other.instance"))
-	if !strings.Contains(o, "failure   fp:") || !strings.Contains(o, "exit 2 | panic: nil map / at main.main") {
+	if !strings.Contains(o, "failure   fp1:") || !strings.Contains(o, "exit 2 | panic: nil map / at main.main") {
 		t.Fatal(o)
 	}
 	if o, _, _ := cli(t, "show", filepath.Join(dir, "fine.instance")); strings.Contains(o, "failure") {

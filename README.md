@@ -216,9 +216,9 @@ codeinstances group failures/
 ```
 codeinstances: 40 failing runs in 3 groups (212 runs passed)
 
-1. 31 runs  fp:6d1f0a93be27c4e1  2026-10-12 02:00 UTC to 2026-10-18 02:00 UTC
+1. 31 runs  fp1:6d1f0a93be27c4e1  2026-10-12 02:00 UTC to 2026-10-18 02:00 UTC
    ended  exit 1
-   error  error: request <n> timed out after <n>ms
+   error  error: request <n> timed out after <duration>
    call   GET https://api.example.com/v1/items?page=* -> no answer
    - failures/run-0412.instance
    - failures/run-0413.instance
@@ -227,20 +227,34 @@ codeinstances: 40 failing runs in 3 groups (212 runs passed)
    - failures/run-0417.instance
    ... and 26 more (-v lists them)
 
-2. 6 runs  fp:1b77c0e9d2a4f815  2026-10-14 02:00 UTC to 2026-10-17 02:00 UTC
+2. 6 runs  fp1:1b77c0e9d2a4f815  2026-10-14 02:00 UTC to 2026-10-17 02:00 UTC
    ...
 ```
 
 Each failing run (one that didn't exit 0) gets a fingerprint made of three
-parts: how it ended; its error, which is a Go panic's message with the first
-three functions on its stack, a Python exception with the last three frames
-of its traceback, or else the last line it printed on stderr (on stdout when
-stderr is empty); and the calls that got no answer or a 5xx status, by
-method and URL. Before hashing, the details that change between repeats are
-blanked out: times, UUIDs, hex ids with at least 8 characters, numbers, and
-the values of query parameters. Runs with the same fingerprint are one group,
-biggest group first. Runs that passed are counted and left out. `show` prints
-a failing run's fingerprint too.
+parts:
+
+- how it ended;
+- its error, read from stderr (from stdout when stderr has nothing): a Go
+  panic or fatal error with the first three functions of the failing
+  goroutine, outside the runtime and the testing package; a Python exception
+  with the last three frames of its traceback; an error followed by `at`
+  frames (Node.js, Java, C#) with its first three frames; the names of
+  failed Go tests; or else the last line that looks like an error, skipping
+  trailers such as `exit status 1`;
+- the calls that got no answer or a 5xx status, by method and URL.
+
+Before hashing, what changes between repeats is blanked out: times,
+durations, UUIDs, hex ids (7 or more hex characters with a digit and a
+letter), other long ids mixing letters and digits, numbers that don't follow
+a letter, ports, and the values of query parameters. Status codes after
+`status`, `code`, `errno` and `error:` are kept, since they are the failure.
+Colour codes and other escape sequences are removed first. The id starts
+with `fp1:`, the version of these rules, so ids made by different rules never
+look alike. Runs with the same fingerprint are one group, biggest group
+first, and the runs in a group are in the order they were recorded. Runs
+that passed are counted and left out, and a file given twice counts once.
+`show` prints a failing run's fingerprint too.
 
 `group` takes files and folders like `test`; `-v` lists every run in a group
 and `-json` prints the groups as JSON. It exits 0 whatever it finds.
@@ -397,7 +411,8 @@ a missing request, an extra random value, an unhooked clock), comparing runs
 value counts, notes that don't count, speed order), shrinking (two answers
 out of five found, refusals, the run limit, the shrunk file failing on
 replay), regression tests (match and pass, a fixed build), fingerprints
-(normalising, Go panics, Python tracebacks, failed calls, grouping), crashes,
+(normalising, Go panics and fatal errors, go test output, Python, Node.js
+and Java traces, escape codes, failed calls, grouping), crashes,
 killed
 programs and timeouts, a recorder killed with SIGKILL leaving no file, and
 Ctrl-C reaching the program while the recorder finishes.
@@ -435,9 +450,11 @@ Ctrl-C reaching the program while the recorder finishes.
 - `shrink` assumes the program fails the same way every time it gets the same
   answers. One that fails at random can mislead it.
 - A fingerprint is a heuristic. Two bugs that end the same way, print the
-  same last line and fail the same calls share one; one bug whose message
+  same error line and fail the same calls share one; one bug whose message
   carries a word that changes (a file name, say) splits into several groups.
-  Stack traces other than Go panics and Python tracebacks aren't read.
+  Calls are told apart by method and URL, not body, so every failing call to
+  one GraphQL or JSON-RPC endpoint looks the same. Python exception groups
+  and stack traces in other formats aren't read as traces.
 - Replay has no time limit unless you give `-timeout`, so give one when
   replaying a run that timed out.
 - The recording proxy listens on a loopback port with no password while the

@@ -119,6 +119,13 @@ def smoke(bin_dir, version):
         grouped = json.loads(run([cli, "group", "-json", file, second]).stdout)
         require(grouped["failing"] == 0 and grouped["passed"] == 2 and grouped["groups"] == [], f"group: {grouped}")
         print("ok   group counts the passing runs and groups none")
+        crash = Path(work) / "crash.py"
+        crash.write_text("import time\ndef load():\n    raise KeyError('row %d' % time.time_ns())\nload()\n", encoding="utf-8")
+        for name in ("crash1.instance", "crash2.instance"):
+            run([cli, "record", "-q", "-o", Path(work) / name, "--", sys.executable, crash], check=False)
+        grouped = json.loads(run([cli, "group", "-json", Path(work) / "crash1.instance", Path(work) / "crash2.instance", file]).stdout)
+        require(grouped["failing"] == 2 and len(grouped["groups"]) == 1 and grouped["groups"][0]["fingerprint"]["error"].startswith("KeyError: 'row <n>'\nat load (crash.py)"), f"group: {grouped}")
+        print("ok   group puts two Python crashes with different messages in one group")
         shown = run([cli, "show", file]).stdout
         require("GET " + url + "/two?x=1 -> 200" in shown, f"show: {shown}")
         require("intact" in run([cli, "verify", file]).stdout, "verify")

@@ -721,17 +721,24 @@ func group(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	var runs []codeinstances.NamedInstance
+	seen := map[string]bool{}
 	for _, f := range files {
 		inst, err := instance.Load(f)
 		if err != nil {
 			fmt.Fprintf(stderr, "codeinstances group: %v\n", err)
 			return 2
 		}
+		// The same file given twice, or two copies of it, count once.
+		if seen[inst.ID] {
+			continue
+		}
+		seen[inst.ID] = true
 		runs = append(runs, codeinstances.NamedInstance{Name: f, Instance: inst})
 	}
 	g := codeinstances.GroupFailures(runs)
 	if *asJSON {
 		enc := json.NewEncoder(stdout)
+		enc.SetEscapeHTML(false)
 		enc.SetIndent("", "  ")
 		enc.Encode(g)
 		return 0
@@ -739,11 +746,14 @@ func group(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "codeinstances: %s in %s (%s passed)\n", plural(g.Failing, "failing run"), plural(len(g.Groups), "group"), plural(g.Passed, "run"))
 	for i, grp := range g.Groups {
 		fp := grp.Fingerprint
-		when := grp.First.UTC().Format("2006-01-02 15:04 UTC")
-		if !grp.Last.Equal(grp.First) {
-			when += " to " + grp.Last.UTC().Format("2006-01-02 15:04 UTC")
+		when := ""
+		if grp.First != nil {
+			when = "  " + grp.First.UTC().Format("2006-01-02 15:04 UTC")
+			if last := grp.Last.UTC().Format("2006-01-02 15:04 UTC"); last != when[2:] {
+				when += " to " + last
+			}
 		}
-		fmt.Fprintf(stdout, "\n%d. %s  %s  %s\n", i+1, plural(len(grp.Runs), "run"), fp.ID, when)
+		fmt.Fprintf(stdout, "\n%d. %s  %s%s\n", i+1, plural(len(grp.Runs), "run"), fp.ID, when)
 		fmt.Fprintf(stdout, "   ended  %s\n", fp.Ended)
 		for j, l := range strings.Split(fp.Error, "\n") {
 			if l == "" {
