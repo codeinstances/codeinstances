@@ -51,6 +51,9 @@ type ForkOptions struct {
 	Timeout     time.Duration
 	Stdout      io.Writer
 	Stderr      io.Writer
+	// BaseEnv, when not nil, is the environment the program starts from
+	// instead of this process's own, as for ReplayOptions.
+	BaseEnv []string
 }
 
 // Answer is a made-up answer for a fork: a status, headers and a body, or
@@ -69,35 +72,44 @@ func ReadAnswer(path string) (*Answer, error) {
 	if err != nil {
 		return nil, err
 	}
+	a, err := ParseAnswer(data)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	return a, nil
+}
+
+// ParseAnswer reads an answer from JSON, as ReadAnswer does from a file.
+func ParseAnswer(data []byte) (*Answer, error) {
 	var a Answer
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&a); err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
+		return nil, err
 	}
 	if a.Error != "" {
 		if a.Status != 0 || a.Header != nil || a.Body != "" {
-			return nil, fmt.Errorf("%s: an error stands alone, without a status, headers or a body", path)
+			return nil, errors.New("an error stands alone, without a status, headers or a body")
 		}
 		if SafeText(a.Error) != a.Error {
-			return nil, fmt.Errorf("%s: the error has control characters or line breaks", path)
+			return nil, errors.New("the error has control characters or line breaks")
 		}
 		return &a, nil
 	}
 	if a.Status < 200 || a.Status > 599 {
-		return nil, fmt.Errorf("%s: give a status from 200 to 599, or an error", path)
+		return nil, errors.New("give a status from 200 to 599, or an error")
 	}
 	for name, values := range a.Header {
 		if !headerName.MatchString(name) {
-			return nil, fmt.Errorf("%s: %q isn't a header name", path, name)
+			return nil, fmt.Errorf("%q isn't a header name", name)
 		}
 		switch http.CanonicalHeaderKey(name) {
 		case "Content-Length", "Transfer-Encoding", "Connection", "Keep-Alive", "Trailer", "Upgrade":
-			return nil, fmt.Errorf("%s: the %s header is set by the proxy, not the answer", path, name)
+			return nil, fmt.Errorf("the %s header is set by the proxy, not the answer", name)
 		}
 		for _, v := range values {
 			if strings.ContainsAny(v, "\r\n\x00") || SafeText(v) != strings.TrimSpace(v) {
-				return nil, fmt.Errorf("%s: the %s header has control characters", path, name)
+				return nil, fmt.Errorf("the %s header has control characters", name)
 			}
 		}
 	}
@@ -201,7 +213,7 @@ func Fork(ctx context.Context, parent *instance.Instance, opts ForkOptions) (*in
 	created := time.Now().UTC()
 	res, err := run(ctx, runSpec{
 		argv: argv, dir: opts.Dir, work: work, mode: mode, proxy: proxy.URL(), caPEM: auth.CertPEM(),
-		env: parent.Command.Env, timeout: opts.Timeout, stdout: opts.Stdout, stderr: opts.Stderr,
+		env: parent.Command.Env, timeout: opts.Timeout, stdout: opts.Stdout, stderr: opts.Stderr, base: opts.BaseEnv,
 	})
 	if err != nil {
 		return nil, err

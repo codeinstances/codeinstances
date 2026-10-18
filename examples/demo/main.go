@@ -76,6 +76,8 @@ type report struct {
 	PullMS      int64            `json:"pull_ms"`
 	SignMS      int64            `json:"sign_ms"`
 	VerifyMS    int64            `json:"verify_ms"`
+	RunMS       int64            `json:"run_ms"`
+	RunForkMS   int64            `json:"run_fork_ms"`
 	ServerCalls int              `json:"live_server_requests"`
 }
 
@@ -662,14 +664,67 @@ func demo(cli string, replays int) (*report, error) {
 	if err != nil {
 		return rep, err
 	}
-	signedSrv := &http.Server{Handler: &store.Server{Store: st2, Token: "demo-token", Trusted: trusted}, ReadHeaderTimeout: 10 * time.Second, ErrorLog: log.New(io.Discard, "", 0)}
+	storeKey, err := codeinstances.ReadPrivateKey(keyBase + ".key")
+	if err != nil {
+		return rep, err
+	}
+	signedSrv := &http.Server{Handler: &store.Server{Store: st2, Token: "demo-token", Trusted: trusted,
+		Runner: &store.Runner{SignKey: storeKey, Signer: "demo-store"}}, ReadHeaderTimeout: 10 * time.Second, ErrorLog: log.New(io.Discard, "", 0)}
 	go signedSrv.Serve(ln2)
 	defer signedSrv.Close()
 	url2 := "http://" + ln2.Addr().String()
 	_, c1, _ = runCLI(cli, "push", "-to", url2, "-token", "demo-token", refused)
 	_, c2, _ = runCLI(cli, "push", "-to", url2, "-token", "demo-token", signed)
 	add("a store started with trusted keys refuses the unsigned run and takes the signed one", c1 == 2 && c2 == 0 && len(st2.List()) == 1, "")
+
+	// Runs on demand: the store replays the signed run it keeps, offline,
+	// and tries a what-if on it: had the order gone through, the program
+	// would have got as far as the status call, which the run never made.
+	t = time.Now()
+	out, code, err = runCLI(cli, "run", "-on", url2, "-token", "demo-token", sinst.ID)
+	rep.RunMS = time.Since(t).Milliseconds()
+	if err != nil {
+		return rep, err
+	}
+	add("a store started with -run replays the signed run on demand, and it matches", code == 0 && strings.Contains(out, "on the store: matched (exit 1"), lastLine(out))
+	accepted := filepath.Join(work, "accepted.json")
+	os.WriteFile(accepted, []byte(`{"status": 201, "body": "{\"accepted\":true}"}`), 0o600)
+	ordered := 0
+	for _, c := range sinst.Calls {
+		if strings.HasSuffix(c.Request.URL, "/order") {
+			ordered = c.Seq
+		}
+	}
+	t = time.Now()
+	out, code, err = runCLI(cli, "run", "-on", url2, "-token", "demo-token", "-json", "-at", fmt.Sprint(ordered), "-answer", accepted, sinst.ID)
+	rep.RunForkMS = time.Since(t).Milliseconds()
+	if err != nil {
+		return rep, err
+	}
+	var ran store.RunResult
+	json.Unmarshal([]byte(out[:strings.LastIndex(out, "}")+1]), &ran)
+	kept, _, kerr := st2.Get(ran.Fork)
+	var keptInst *instance.Instance
+	if kerr == nil {
+		keptInst, kerr = instance.Parse(kept)
+	}
+	add("run -at tries a what-if on the store: with the order accepted, the program gets as far as the status call",
+		code == 1 && strings.Contains(ran.Stdout, "order 201") && ran.Summary != nil && ran.Summary.Given == 1 && ran.Summary.Offline >= 1 &&
+			kerr == nil && keptInst.Fork != nil && len(keptInst.Signatures) == 1 && keptInst.Signatures[0].Signer == "demo-store",
+		fmt.Sprintf("exit %d", ran.ExitCode))
+	unsigned, _ := os.ReadFile(refused)
+	st2.Put(unsigned)
+	_, code, _ = runCLI(cli, "run", "-on", url2, "-token", "demo-token", idOfFile(refused))
+	add("the store won't run a run no trusted key signed", code == 2, "")
 	return finish(rep), nil
+}
+
+func idOfFile(path string) string {
+	inst, err := instance.Load(path)
+	if err != nil {
+		return ""
+	}
+	return inst.ID
 }
 
 func finish(rep *report) *report {

@@ -37,7 +37,7 @@ import (
 )
 
 // Version is this release of CodeInstances.
-const Version = "0.7.0"
+const Version = "0.8.0"
 
 // MaxOutput is how much of stdout and of stderr an instance keeps.
 const MaxOutput = 16 << 20
@@ -76,6 +76,28 @@ type ReplayOptions struct {
 	Timeout      time.Duration
 	Stdout       io.Writer
 	Stderr       io.Writer
+	// BaseEnv, when not nil, is the environment the program starts from
+	// instead of this process's own (see MinimalEnv). The proxy, hook and
+	// kept variables are set on top of it either way.
+	BaseEnv []string
+}
+
+// MinimalEnv is the part of this process's environment a program needs to
+// start and find its tools, and nothing else: no tokens or keys that happen
+// to be set. A store that runs instances on demand starts them from it.
+func MinimalEnv() []string {
+	keep := map[string]bool{"PATH": true, "HOME": true, "USER": true, "LOGNAME": true, "SHELL": true, "TMPDIR": true,
+		"LANG": true, "LC_ALL": true, "LC_CTYPE": true, "TZ": true,
+		"SYSTEMROOT": true, "WINDIR": true, "COMSPEC": true, "PATHEXT": true, "TEMP": true, "TMP": true,
+		"USERPROFILE": true, "APPDATA": true, "LOCALAPPDATA": true, "PROGRAMDATA": true, "SYSTEMDRIVE": true}
+	env := []string{}
+	for _, kv := range os.Environ() {
+		k, _, _ := strings.Cut(kv, "=")
+		if keep[strings.ToUpper(k)] && (runtime.GOOS == "windows" || keep[k]) {
+			env = append(env, kv)
+		}
+	}
+	return env
 }
 
 // Report is the outcome of a replay.
@@ -192,7 +214,7 @@ func Replay(ctx context.Context, inst *instance.Instance, opts ReplayOptions) (*
 	}
 	res, err := run(ctx, runSpec{
 		argv: argv, dir: opts.Dir, work: work, mode: "replay", proxy: proxy.URL(), caPEM: auth.CertPEM(),
-		env: inst.Command.Env, timeout: opts.Timeout, stdout: opts.Stdout, stderr: opts.Stderr,
+		env: inst.Command.Env, timeout: opts.Timeout, stdout: opts.Stdout, stderr: opts.Stderr, base: opts.BaseEnv,
 	})
 	if err != nil {
 		return nil, err
@@ -222,6 +244,8 @@ type runSpec struct {
 	env            map[string]string
 	timeout        time.Duration
 	stdout, stderr io.Writer
+	// base, when not nil, replaces os.Environ() as the starting point.
+	base []string
 }
 
 // proxyVars are cleared from the program's environment and set again to the
@@ -293,7 +317,11 @@ func environment(s runSpec, caFile string) []string {
 		skip[envName(k)] = true
 	}
 	var env []string
-	for _, kv := range os.Environ() {
+	base := s.base
+	if base == nil {
+		base = os.Environ()
+	}
+	for _, kv := range base {
 		k, _, _ := strings.Cut(kv, "=")
 		if isProxyVar(k) || skip[envName(k)] {
 			continue

@@ -783,3 +783,61 @@ func TestKeygenSignVerify(t *testing.T) {
 		}
 	}
 }
+
+func TestRunCommand(t *testing.T) {
+	dir := t.TempDir()
+	key := filepath.Join(dir, "ci")
+	cli(t, "keygen", "-o", key)
+	file := filepath.Join(dir, "hello.instance")
+	t.Setenv("CI_CMD_CHILD", "hello")
+	t.Setenv("CI_CMD_EXIT", "3")
+	cli(t, append([]string{"record", "-q", "-sign", key + ".key", "-env", "CI_CMD_CHILD", "-env", "CI_CMD_EXIT", "-o", file, "--"}, childArgs()...)...)
+	os.Unsetenv("CI_CMD_CHILD")
+	trusted, err := codeinstances.ReadTrust(key + ".pub")
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, _ := store.Open(filepath.Join(dir, "store"))
+	ts := httptest.NewServer(&store.Server{Store: st, Token: "sesame", Trusted: trusted, Runner: &store.Runner{}})
+	defer ts.Close()
+	t.Setenv("CODEINSTANCES_STORE", ts.URL)
+	t.Setenv("CODEINSTANCES_TOKEN", "sesame")
+	if _, e, code := cli(t, "push", file); code != 0 {
+		t.Fatal(e)
+	}
+	inst, _ := instance.Load(file)
+
+	o, e, code := cli(t, "run", inst.ID)
+	if code != 0 || !strings.Contains(o, "--- stdout\nhello ") || !strings.Contains(o, "on the store: matched (exit 3") {
+		t.Fatalf("%d %s %s", code, o, e)
+	}
+	forked := filepath.Join(dir, "fork.instance")
+	o, e, code = cli(t, "run", "-at", "1", "-o", forked, inst.ID)
+	if code != 3 || !strings.Contains(o, "the store keeps the fork as sha256:") {
+		t.Fatalf("fork: %d %s %s", code, o, e)
+	}
+	if f, err := instance.Load(forked); err != nil || f.Fork == nil || f.Fork.Parent != inst.ID {
+		t.Fatalf("the downloaded fork: %v", err)
+	}
+	o, _, code = cli(t, "run", "-json", inst.ID)
+	var res store.RunResult
+	if code != 0 || json.Unmarshal([]byte(o), &res) != nil || !res.Matched || res.ExitCode != 3 {
+		t.Fatalf("-json: %d %s", code, o)
+	}
+
+	for _, args := range [][]string{
+		{"run"},
+		{"run", "-answer", file, inst.ID},
+		{"run", "-o", forked, inst.ID},
+		{"run", "-at", "1", "-answer", filepath.Join(dir, "missing.json"), inst.ID},
+		{"run", "-token", "wrong", inst.ID},
+		{"run", "nothex"},
+		{"serve", "-run"},
+		{"serve", "-run", "-trust", key + ".pub", "-run-timeout", "0"},
+		{"serve", "-sign", key + ".key"},
+	} {
+		if _, _, code := cli(t, args...); code != 2 {
+			t.Errorf("%v: exit %d, want 2", args, code)
+		}
+	}
+}

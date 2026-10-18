@@ -3,8 +3,8 @@
 Keep a run of any program as a file, replay it, compare it with another,
 shrink a failure to what causes it, keep it as a test, group repeats of the
 same bug, share it through a store of your own, fork it at a step to run on
-from there, and sign it so others can check who kept it and that nothing
-changed since.
+from there, sign it so others can check who kept it and that nothing
+changed since, and have a store run it on demand.
 
 Your code is versioned, reviewed and stored. Its runs are thrown away: a
 test fails in CI, the rerun passes, and the bug is gone. CodeInstances keeps
@@ -23,14 +23,15 @@ it, `codeinstances test` replays a folder of instances as regression tests,
 self-hosted store and as bug reports, `codeinstances fork` takes a run up
 to a step and runs on from there, live or with an answer you give, and
 `codeinstances sign` and `verify -trust` show who kept a run and that it
-wasn't changed afterwards.
+wasn't changed afterwards, and `codeinstances run` has a store replay a
+signed run, or try a what-if on it, on demand.
 
-**Status: v0.7.0, an early release.** Recording, offline replay, divergence
+**Status: v0.8.0, an early release.** Recording, offline replay, divergence
 reports, comparing two runs, shrinking a failure, instances as regression
 tests, grouping failures, a self-hosted store, bug reports, forking a run,
-signed runs, the Go hook package, the open format and its integrity check work and are
+signed runs, runs on demand, the Go hook package, the open format and its integrity check work and are
 tested on Linux and macOS, with the release binaries also checked on
-Windows. The limits are listed [below](#limits-in-v070). Open source under the
+Windows. The limits are listed [below](#limits-in-v080). Open source under the
 Apache License 2.0.
 
 ## Download
@@ -400,6 +401,52 @@ a step the program has no part in. Until it's signed, the file is only as
 safe as the place it sits: whoever can change it there can change what gets
 signed. [docs/ci.md](docs/ci.md) shows that in CI.
 
+### Running instances on demand
+
+A store can run what it keeps. Start it with `-run`, and anyone with the
+store's token can have it replay a run, or fork one at a step with an
+answer given there, and get back how it went:
+
+```sh
+codeinstances serve -dir instances -trust ci.pub -run -sign store.key -signer store
+codeinstances run 3f2a9c1e77b0                               # replay it on the store, offline
+codeinstances run -at 4 -answer 503.json -o what-if.instance 3f2a9c1e77b0
+```
+
+The store runs a kept instance the way the function in a function service
+runs on a request: the run is the function, and a request runs it. A
+`replay` answers whether the program, as installed where the store runs,
+still does what the run did. A fork tries a what-if there without anyone
+setting up the program on their own machine; the store keeps the fork, signs
+it with `-sign` so you can tell it ran on the store, and `run -o` downloads
+it.
+
+Running commands on request needs care, so the rules are tight:
+
+- `-run` needs `-trust`, and the store runs only instances signed by one of
+  those keys, checked at every run, whatever is in its folder.
+- It runs the command each instance recorded, and nothing a request says can
+  change it. A request picks the run, and for a fork the step, the answer
+  and whether to hand out fresh values. Nothing else.
+- Every run is offline: replays answer from the recording, forks get a 502
+  for anything the parent has no answer for. Nothing a run does reaches the
+  network through the store.
+- Runs start from a minimal environment (`PATH`, `HOME`, the locale, the
+  temporary folder and the like, plus what the instance kept), not the
+  store's own, so the store's token doesn't reach the program.
+- One run at a time by default (`-max-runs`), a minute each
+  (`-run-timeout`), in `-run-dir` (the folder `serve` started in by
+  default). More runs at once get 503. A run stops when its client goes away.
+- The answer carries how the run ended and the last 64 KiB of each output
+  stream; `run` prints them and exits as `replay` does, or with `-at` as the
+  program did.
+
+The program has to be where the store runs, at the path it was recorded
+with, as it would for a local replay. A store that runs instances runs code
+that trusted keys signed, as the user the store runs as, with that user's
+files in reach. Run it as a user of its own, or in a container, and keep its
+key file where the programs it runs can't read it.
+
 ### Commands
 
 | Command | What it does |
@@ -414,6 +461,7 @@ signed. [docs/ci.md](docs/ci.md) shows that in CI.
 | `push [-to url] file-or-dir...` | Upload instances to a store |
 | `pull [-from url] [-o file] id` | Download an instance by id or unique prefix |
 | `report [-url store] file` | Write a Markdown bug report for an instance |
+| `run [-on url] [-at N [-answer file]] id` | Have a store started with `-run` replay a run it keeps, or fork it offline at a step |
 | `fork [flags] -at N parent [-- command]` | Run on from a step: the parent's answers before it, live (or given) from it |
 | `keygen [-o name] [-label text]` | Make a key pair for signing: `name.key` and `name.pub` |
 | `sign -key file.key [-signer name] [-o out] file` | Sign an instance (in place unless `-o`) |
@@ -448,13 +496,20 @@ test (a minute by default); `-v` lists the notes of passing tests too;
 `-max-size` in bytes (default 64 MiB), `-host name` to answer to another host
 name too, such as the public name of an HTTPS proxy in front of a loopback
 store (repeatable), and `-trust keys` to take only runs signed by those
-keys (repeatable). `push` and `pull` take `-to` or `-from` (default
+keys (repeatable); `-run` to run signed instances on demand, with
+`-run-dir`, `-run-timeout` (default 1m), `-max-runs` (default 1), and
+`-sign key` and `-signer name` to sign the forks it keeps. `push` and `pull` take `-to` or `-from` (default
 `$CODEINSTANCES_STORE`) and `-token`; `push -json` prints the results as JSON;
 `pull -o` names the file and `pull -max-size` (default 64 MiB) is the largest
 file it takes; `pull -trust keys` keeps the run only if one of those keys
 signed it. `report -url` (default
 `$CODEINSTANCES_STORE`) adds the `pull` command; `-lines` sets how much output
 to show.
+
+`run` flags: `-on url` (default `$CODEINSTANCES_STORE`) and `-token`;
+`-strict` and `-ignore-stderr` as for `replay`; `-at N` to fork instead of
+replay, with `-answer file.json`, `-fresh-values` and `-o file` to download
+the fork; `-json` prints the store's answer as JSON.
 
 `fork` flags: `-at N` (required); `-o` (default `fork.instance`);
 `-answer file.json`; `-offline`; `-fresh-values`; and `-resolve`,
@@ -559,6 +614,11 @@ its parent. Last, it makes a key, signs the refused-order run and checks
 given; edits the signed run's output, writes a matching id, and checks
 `verify` still catches it on the signature; and starts a store with the key
 as trusted and checks it refuses the unsigned run and takes the signed one.
+With that store running instances on demand, it checks `run` replays the
+signed run there and it matches; that a what-if fork on the store, with the
+order accepted, gets the program as far as the status call the run never
+made, and comes back signed by the store's key; and that the store won't run
+the unsigned run.
 Progress goes to stderr and a JSON
 report to stdout; any failed check makes it exit 1.
 
@@ -597,14 +657,17 @@ replay), regression tests (match and pass, a fixed build), fingerprints
 (normalising, Go panics and fatal errors, go test output, Python, Node.js
 and Java traces, escape codes, failed calls, grouping), the store (ids and
 prefixes, edited and oversized uploads, tokens, the page escaping what runs
-print, a lying server caught by pull, trusted keys), signatures (edits with
+print, a lying server caught by pull, trusted keys), runs on demand (replay
+and fork on the store, signed forks, the minimal environment, one run at a
+time, the time limit, refused requests, a lying store caught by the
+client), signatures (edits with
 a fresh id, signatures moved to another run, malformed signatures, two
 signers, key files and trust files), bug reports, crashes,
 killed
 programs and timeouts, a recorder killed with SIGKILL leaving no file, and
 Ctrl-C reaching the program while the recorder finishes.
 
-## Limits in v0.7.0
+## Limits in v0.8.0
 
 - HTTP only. WebSocket, raw TCP and other protocols aren't recorded.
 - Bodies are buffered whole, up to 64 MiB each, so a streamed response reaches
@@ -681,6 +744,15 @@ Ctrl-C reaching the program while the recorder finishes.
   checked.
 - Only Ed25519 is made and checked. Signatures in other algorithms are kept
   and left unchecked.
+- A store that runs instances runs signed code as its own user. The
+  minimal environment keeps the store's variables out, not its files: a
+  program, or a bug in one that an answer given at a fork can reach, can read
+  what that user can, the store's folder and key file included. Run it as a
+  user of its own or in a container.
+- Runs on a store are offline only. A run that needs the network, or a
+  program that isn't installed where the store runs, can't run there.
+- A run's answer comes at the end, not as the program prints, and carries
+  only the last 64 KiB of each output stream.
 - Replay has no time limit unless you give `-timeout`, so give one when
   replaying a run that timed out.
 - The recording proxy listens on a loopback port with no password while the
@@ -690,8 +762,9 @@ Ctrl-C reaching the program while the recorder finishes.
 ## Where it goes next
 
 CodeInstances treats each run as an object you can do things to. This release
-does nine of them: keep, replay, compare, shrink, test, group, share, fork
-and sign. Running instances on demand is the last item on the plan.
+does ten of them: keep, replay, compare, shrink, test, group, share, fork,
+sign and run on demand. That's every item on the plan; what comes next is
+decided as it's used.
 
 ## Building and contributing
 

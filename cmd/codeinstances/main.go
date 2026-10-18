@@ -15,6 +15,7 @@
 //	codeinstances serve [flags]
 //	codeinstances push [flags] file...
 //	codeinstances pull [flags] id
+//	codeinstances run [flags] id
 //	codeinstances keygen [flags]
 //	codeinstances sign [flags] -key file.key file
 //	codeinstances show [-json] file
@@ -79,6 +80,9 @@ Usage:
       Upload instances to a store and print their ids and links.
   codeinstances pull [-from url] [-o file] id
       Download an instance from a store by id or unique prefix.
+  codeinstances run [-on url] [-at N [-answer file]] id
+      Have a store started with -run replay an instance it keeps, offline,
+      or fork it offline at step N, and print how the run went.
   codeinstances keygen [-o name] [-label text]
       Make a key pair for signing instances: name.key, kept secret, and
       name.pub, to give to whoever checks your runs.
@@ -94,7 +98,8 @@ Usage:
 Run "codeinstances COMMAND -h" for a command's flags.
 Exit status: record and fork exit as the program did; replay exits 0 when the run
 matched, 1 when it diverged; diff exits 0 when the runs are the same, 1 when
-they differ; verify exits 0 when every file checked out, 1 when one was
+they differ; run exits as replay does, or with -at as the forked program
+did; verify exits 0 when every file checked out, 1 when one was
 changed, carries a bad signature or, with -trust, no trusted one; shrink exits 0 when it kept an instance, 1 when the failure
 couldn't be narrowed down; test exits 0 when every test passed, 1
 when any failed; group, report, push and pull exit 0 when they worked; any
@@ -135,6 +140,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return push(args[1:], stdout, stderr)
 	case "pull":
 		return pull(args[1:], stdout, stderr)
+	case "run":
+		return runRemote(args[1:], stdout, stderr)
 	case "keygen":
 		return keygen(args[1:], stdout, stderr)
 	case "sign":
@@ -1094,6 +1101,11 @@ func serve(args []string, stdout, stderr io.Writer) int {
 	fs.Var(&hosts, "host", "also answer to this host name, such as the public name of an HTTPS proxy in front of a loopback store (repeatable)")
 	var trustFiles list
 	fs.Var(&trustFiles, "trust", "take only instances signed by a key in this file, as keygen writes them (repeatable)")
+	runs := fs.Bool("run", false, "run instances on demand: replay or fork offline the ones a trusted key signed (needs -trust)")
+	runDir := fs.String("run-dir", "", "the working directory for runs (default: the one serve started in)")
+	runTimeout := fs.Duration("run-timeout", store.DefaultRunTimeout, "the time limit for each run")
+	maxRuns := fs.Int("max-runs", store.DefaultMaxRuns, "how many runs at once; more get 503")
+	signKey, signer := signFlags(fs)
 	fs.Usage = func() {
 		fmt.Fprintln(stderr, "usage: codeinstances serve [flags]")
 		fs.PrintDefaults()
@@ -1116,6 +1128,26 @@ func serve(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "codeinstances serve: -trust: %v\n", err)
 			return 2
 		}
+	}
+	var runner *store.Runner
+	if *runs {
+		if len(trusted) == 0 {
+			fmt.Fprintln(stderr, "codeinstances serve: -run needs -trust: the store runs only instances signed by a key you trust")
+			return 2
+		}
+		if *runTimeout <= 0 || *maxRuns <= 0 {
+			fmt.Fprintln(stderr, "codeinstances serve: -run-timeout and -max-runs must be above 0")
+			return 2
+		}
+		key, err := loadSigningKey(*signKey)
+		if err != nil {
+			fmt.Fprintf(stderr, "codeinstances serve: -sign: %v\n", err)
+			return 2
+		}
+		runner = &store.Runner{Dir: *runDir, Timeout: *runTimeout, MaxRuns: *maxRuns, SignKey: key, Signer: *signer}
+	} else if *signKey != "" || *runDir != "" {
+		fmt.Fprintln(stderr, "codeinstances serve: -sign and -run-dir go with -run")
+		return 2
 	}
 	made := false
 	if *token == "" {
@@ -1140,7 +1172,10 @@ func serve(args []string, stdout, stderr io.Writer) int {
 	if made {
 		fmt.Fprintf(stderr, "codeinstances: token %s (set CODEINSTANCES_TOKEN or -token to choose one)\n", *token)
 	}
-	handler := &store.Server{Store: st, Token: *token, OpenRead: *openRead, MaxBytes: *maxBytes, Trusted: trusted}
+	handler := &store.Server{Store: st, Token: *token, OpenRead: *openRead, MaxBytes: *maxBytes, Trusted: trusted, Runner: runner}
+	if runner != nil {
+		fmt.Fprintf(stderr, "codeinstances: running signed instances on demand, %s at a time, offline, up to %s each\n", plural(*maxRuns, "run"), *runTimeout)
+	}
 	if len(trusted) > 0 {
 		fmt.Fprintf(stderr, "codeinstances: taking only instances signed by %s\n", plural(len(trusted), "trusted key"))
 	}
@@ -1153,7 +1188,7 @@ func serve(args []string, stdout, stderr io.Writer) int {
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       2 * time.Minute,
-		WriteTimeout:      2 * time.Minute,
+		WriteTimeout:      2*time.Minute + *runTimeout,
 		IdleTimeout:       2 * time.Minute,
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -1295,6 +1330,129 @@ func pull(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "codeinstances: pulled %s (%s)\n", path, codeinstances.SafeText(inst.Summary()))
 	return 0
+}
+
+func runRemote(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("run", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	client, u, t := storeClient(fs, "on")
+	at := fs.Int("at", 0, "fork at this step instead of replaying: the parent's first call not answered from the parent")
+	answerFile := fs.String("answer", "", "with -at: a JSON file with the answer to give at the step, as for fork")
+	fresh := fs.Bool("fresh-values", false, "with -at: hand the program new clock and random values")
+	strict := fs.Bool("strict", false, "replay: require HTTP requests in exactly the recorded order")
+	noStderr := fs.Bool("ignore-stderr", false, "replay: leave stderr out of the comparison")
+	out := fs.String("o", "", "with -at: also download the fork the store kept to this file")
+	asJSON := fs.Bool("json", false, "print the store's answer as JSON")
+	fs.Usage = func() {
+		fmt.Fprintln(stderr, "usage: codeinstances run [flags] id")
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() != 1 || *u == "" {
+		if *u == "" {
+			fmt.Fprintln(stderr, "codeinstances run: give -on or set CODEINSTANCES_STORE")
+		}
+		fs.Usage()
+		return 2
+	}
+	if *at == 0 && (*answerFile != "" || *fresh || *out != "") {
+		fmt.Fprintln(stderr, "codeinstances run: -answer, -fresh-values and -o go with -at")
+		return 2
+	}
+	client.URL, client.Token = *u, *t
+	var res *store.RunResult
+	var err error
+	if *at != 0 {
+		req := store.ForkRequest{At: *at, FreshValues: *fresh}
+		if *answerFile != "" {
+			if req.Answer, err = codeinstances.ReadAnswer(*answerFile); err != nil {
+				fmt.Fprintf(stderr, "codeinstances run: -answer: %v\n", err)
+				return 2
+			}
+		}
+		res, err = client.Fork(fs.Arg(0), req)
+	} else {
+		res, err = client.Replay(fs.Arg(0), store.ReplayRequest{Strict: *strict, IgnoreStderr: *noStderr})
+	}
+	if err != nil {
+		fmt.Fprintf(stderr, "codeinstances run: %v\n", err)
+		return 2
+	}
+	if *out != "" {
+		data, _, err := client.Pull(res.Fork)
+		if err == nil {
+			err = instance.WriteAtomic(*out, data)
+		}
+		if err != nil {
+			fmt.Fprintf(stderr, "codeinstances run: -o: %v\n", err)
+			return 2
+		}
+	}
+	if *asJSON {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		enc.Encode(res)
+	} else {
+		printRun(stdout, res, *out)
+	}
+	if res.Kind == "replay" {
+		if res.Matched {
+			return 0
+		}
+		return 1
+	}
+	if res.Signal == "" && !res.TimedOut && res.ExitCode >= 0 {
+		return res.ExitCode
+	}
+	return 1
+}
+
+func printRun(w io.Writer, res *store.RunResult, out string) {
+	safe := codeinstances.SafeText
+	ended := fmt.Sprintf("exit %d", res.ExitCode)
+	switch {
+	case res.TimedOut:
+		ended = "timed out"
+	case res.Signal != "":
+		ended = "killed by " + safe(res.Signal)
+	}
+	for _, stream := range []struct{ name, text string }{{"stdout", res.Stdout}, {"stderr", res.Stderr}} {
+		if stream.text == "" {
+			continue
+		}
+		fmt.Fprintf(w, "--- %s\n", stream.name)
+		for _, line := range strings.Split(strings.TrimRight(stream.text, "\n"), "\n") {
+			// Keep the indent, which traces need; clean the rest.
+			rest := strings.TrimLeft(line, " \t")
+			fmt.Fprintln(w, line[:len(line)-len(rest)]+safe(rest))
+		}
+	}
+	if res.Cut {
+		fmt.Fprintln(w, "(only the end of the output is shown)")
+	}
+	if res.Kind == "replay" {
+		if res.Matched {
+			fmt.Fprintf(w, "codeinstances: replayed %s on the store: matched (%s after %d ms)\n", instance.ShortID(res.Instance), ended, res.DurationMS)
+			return
+		}
+		fmt.Fprintf(w, "codeinstances: replayed %s on the store: diverged (%s after %d ms)\n", instance.ShortID(res.Instance), ended, res.DurationMS)
+		for _, d := range res.Divergences {
+			fmt.Fprintf(w, "  - %s\n", safe(d))
+		}
+		return
+	}
+	sum := res.Summary
+	if sum == nil {
+		sum = &codeinstances.ForkSummary{}
+	}
+	fmt.Fprintf(w, "codeinstances: forked %s on the store, offline: %d answered from the parent, %d given, %d not sent; %s after %d ms\n",
+		instance.ShortID(res.Instance), sum.FromParent, sum.Given, sum.Offline, ended, res.DurationMS)
+	fmt.Fprintf(w, "codeinstances: the store keeps the fork as %s\n", res.Fork)
+	if out != "" {
+		fmt.Fprintf(w, "codeinstances: downloaded it to %s\n", out)
+	}
 }
 
 func fork(args []string, stdout, stderr io.Writer) int {

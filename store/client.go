@@ -148,3 +148,41 @@ func (c *Client) Pull(ref string) ([]byte, *instance.Instance, error) {
 	}
 	return data, inst, nil
 }
+
+// Replay asks the store to replay an instance it keeps, by id or unique
+// prefix, and returns how the run went.
+func (c *Client) Replay(ref string, req ReplayRequest) (*RunResult, error) {
+	return c.runOn(ref, "replay", req)
+}
+
+// Fork asks the store to fork an instance it keeps offline at a step, and
+// returns how the fork ran and the id the store keeps it under.
+func (c *Client) Fork(ref string, req ForkRequest) (*RunResult, error) {
+	return c.runOn(ref, "fork", req)
+}
+
+func (c *Client) runOn(ref, kind string, req any) (*RunResult, error) {
+	hex, err := cleanRef(ref)
+	if err != nil {
+		return nil, err
+	}
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, err
+	}
+	out, _, err := c.do(http.MethodPost, "/v1/instances/"+hex+"/"+kind, body)
+	if err != nil {
+		return nil, err
+	}
+	var res RunResult
+	if err := json.Unmarshal(out, &res); err != nil {
+		return nil, fmt.Errorf("the store's answer: %w", err)
+	}
+	if !strings.HasPrefix(strings.TrimPrefix(res.Instance, "sha256:"), hex) || res.Kind != kind {
+		return nil, errors.New("the store answered about another run")
+	}
+	if kind == "fork" && !strings.HasPrefix(res.Fork, "sha256:") {
+		return nil, errors.New("the store didn't say where it kept the fork")
+	}
+	return &res, nil
+}

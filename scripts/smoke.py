@@ -16,7 +16,8 @@
 # the file, diff telling it apart from a second run, test replaying it as a
 # regression test, fork answering from the parent offline, group leaving
 # passing runs out and grouping two crashes, a store served, pushed to and
-# pulled from, and a run signed and checked against trusted keys.
+# pulled from, a run signed and checked against trusted keys, and a store
+# replaying that signed run on demand.
 import http.server
 import json
 import os
@@ -164,6 +165,20 @@ def smoke(bin_dir, version):
         require(run([cli, "verify", "-trust", Path(work) / "other.pub", signed], check=False).returncode == 1, "verify -trust took another key")
         require(run([cli, "verify", "-trust", str(key) + ".pub", second], check=False).returncode == 1, "verify -trust took an unsigned run")
         print("ok   keygen, sign and verify -trust")
+        server = subprocess.Popen([str(cli), "serve", "-dir", str(Path(work) / "runs"), "-addr", "127.0.0.1:0", "-token", "smoke",
+                                   "-run", "-trust", str(key) + ".pub", "-run-dir", work], stderr=subprocess.PIPE, text=True)
+        try:
+            line = server.stderr.readline()
+            require(" at http://127.0.0.1:" in line, f"serve -run: {line}")
+            store = line.rsplit(" at ", 1)[1].strip()
+            run([cli, "push", "-to", store, "-token", "smoke", signed])
+            sid = json.loads(signed.read_text(encoding="utf-8"))["id"]
+            ran = run([cli, "run", "-on", store, "-token", "smoke", sid])
+            require("on the store: matched" in ran.stdout, f"run: {ran.stdout}")
+        finally:
+            server.terminate()
+            server.wait(timeout=30)
+        print("ok   serve -run replays a signed run on demand")
         data = file.read_text(encoding="utf-8")
         file.write_text(data.replace('"exit_code": 0', '"exit_code": 1', 1), encoding="utf-8")
         require(run([cli, "verify", file], check=False).returncode == 1, "verify missed an edited file")

@@ -36,6 +36,8 @@ const DefaultMaxUploads = 2
 //	GET  /v1/instances          list the stored instances as JSON (?failed=true for failing ones)
 //	GET  /v1/instances/{id}     download an instance by id or unique prefix
 //	GET  /v1/groups             the failing instances grouped by fingerprint, as JSON
+//	POST /v1/instances/{id}/replay  replay the instance offline (with a Runner)
+//	POST /v1/instances/{id}/fork    fork it offline at a step (with a Runner)
 //
 // HEAD works wherever GET does.
 type Server struct {
@@ -56,6 +58,9 @@ type Server struct {
 	// Trusted, when set, makes the server take only instances signed by one
 	// of these keys. Instances already in the folder are served as they are.
 	Trusted []codeinstances.TrustedKey
+	// Runner, when set, lets the server run the instances it keeps; see
+	// Runner. It runs only instances signed by a key in Trusted.
+	Runner *Runner
 
 	slotsOnce sync.Once
 	uploads   chan struct{}
@@ -84,9 +89,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if method == http.MethodHead {
 		method = http.MethodGet
 	}
-	var allow string
+	var allow, runKind, runRef string
+	if rest, ok := strings.CutPrefix(path, "/v1/instances/"); ok && s.Runner != nil {
+		if ref, kind, ok := strings.Cut(rest, "/"); ok && (kind == "replay" || kind == "fork") {
+			runRef, runKind = ref, kind
+		}
+	}
 	switch {
-	case path == "" || path == "/v1/groups" || strings.HasPrefix(path, "/v1/instances/"):
+	case runKind != "":
+		allow = "POST"
+	case path == "" || path == "/v1/groups" || strings.HasPrefix(path, "/v1/instances/") && !strings.Contains(strings.TrimPrefix(path, "/v1/instances/"), "/"):
 		allow = "GET, HEAD"
 	case path == "/v1/instances":
 		allow = "GET, HEAD, POST"
@@ -105,6 +117,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch {
+	case runKind != "":
+		if mt, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); mt != "application/json" {
+			problem(w, http.StatusUnsupportedMediaType, "send the request with Content-Type: application/json")
+			return
+		}
+		s.run(w, r, runRef, runKind)
 	case path == "":
 		s.index(w)
 	case path == "/v1/instances" && method == http.MethodPost:

@@ -129,6 +129,22 @@ A store started with `-trust ci.pub` takes only signed runs, and on a laptop
 `codeinstances pull -trust ci.pub ...` or `codeinstances verify -trust ci.pub
 run.instance` checks the key before you trust what the run says.
 
+## Running failures on the store
+
+On a machine that has the project built as CI builds it, a store started
+with `-run` replays signed runs on request, so a failing run can be tried
+again, or tried with another answer at a step, without anyone setting the
+project up on a laptop:
+
+```sh
+codeinstances serve -dir /srv/instances -host instances.example.com -trust ci.pub -run -run-dir /srv/checkout
+codeinstances run 3f2a9c1e77b0                     # from anywhere with the token
+```
+
+The store runs each instance's recorded command, offline, as the user it
+runs as, and only instances `ci.pub` signed. Give it a user of its own, and
+see the README for the rest of the rules.
+
 ## Things to know
 
 - This page is an example. The project's own CI doesn't run it.
