@@ -1,28 +1,28 @@
 # Every test, verbose
-# recorded 2026-10-18 06:22 UTC at c2a5975, CodeInstances 0.1.0, go1.24.7 linux/amd64
+# recorded 2026-10-18 07:00 UTC at 39838cf, CodeInstances 0.2.0, go1.24.7 linux/amd64
 # Linux 6.18.44-fc-v139, Intel(R) Xeon(R) Processor @ 2.10GHz, 2 CPUs
 # command: go test -count=1 -v ./...
 
 === RUN   TestRecordAndReplayMatchOffline
---- PASS: TestRecordAndReplayMatchOffline (0.07s)
+--- PASS: TestRecordAndReplayMatchOffline (0.10s)
 === RUN   TestExitCodeIsRecordedAndCompared
---- PASS: TestExitCodeIsRecordedAndCompared (0.04s)
+--- PASS: TestExitCodeIsRecordedAndCompared (0.07s)
 === RUN   TestChangedProgramsAreCaught
---- PASS: TestChangedProgramsAreCaught (0.06s)
+--- PASS: TestChangedProgramsAreCaught (0.08s)
 === RUN   TestStderrComparisonCanBeSkipped
 --- PASS: TestStderrComparisonCanBeSkipped (0.03s)
 === RUN   TestCrashesAreRecordedAndReplayed
---- PASS: TestCrashesAreRecordedAndReplayed (0.02s)
+--- PASS: TestCrashesAreRecordedAndReplayed (0.03s)
 === RUN   TestKilledProgramIsRecorded
---- PASS: TestKilledProgramIsRecorded (0.03s)
+--- PASS: TestKilledProgramIsRecorded (0.04s)
 === RUN   TestTimeoutIsRecorded
 --- PASS: TestTimeoutIsRecorded (0.61s)
 === RUN   TestKeptEnvironmentIsSetOnReplay
---- PASS: TestKeptEnvironmentIsSetOnReplay (0.02s)
+--- PASS: TestKeptEnvironmentIsSetOnReplay (0.03s)
 === RUN   TestLargeAndBinaryOutput
---- PASS: TestLargeAndBinaryOutput (1.34s)
+--- PASS: TestLargeAndBinaryOutput (1.67s)
 === RUN   TestReplayAnotherCommand
---- PASS: TestReplayAnotherCommand (0.06s)
+--- PASS: TestReplayAnotherCommand (0.05s)
 === RUN   TestOutputIsPassedThrough
 --- PASS: TestOutputIsPassedThrough (0.02s)
 === RUN   TestErrors
@@ -33,12 +33,30 @@
 --- PASS: TestEnvironmentForTheProgram (0.00s)
 === RUN   TestDedupeKeepsDriveEntries
 --- PASS: TestDedupeKeepsDriveEntries (0.00s)
+=== RUN   TestCompareSame
+--- PASS: TestCompareSame (0.00s)
+=== RUN   TestCompareEndingAndOutput
+--- PASS: TestCompareEndingAndOutput (0.00s)
+=== RUN   TestCompareCalls
+--- PASS: TestCompareCalls (0.00s)
+=== RUN   TestCompareErrorsAndBodies
+--- PASS: TestCompareErrorsAndBodies (0.00s)
+=== RUN   TestCompareValueCounts
+--- PASS: TestCompareValueCounts (0.00s)
+=== RUN   TestCompareNotesDontCount
+--- PASS: TestCompareNotesDontCount (0.00s)
+=== RUN   TestCompareSpeedOrder
+--- PASS: TestCompareSpeedOrder (0.00s)
+=== RUN   TestCompareRecordedRuns
+--- PASS: TestCompareRecordedRuns (0.05s)
+=== RUN   TestClipKeepsCharactersWhole
+--- PASS: TestClipKeepsCharactersWhole (0.00s)
 PASS
-ok  	github.com/codeinstances/codeinstances	2.311s
+ok  	github.com/codeinstances/codeinstances	2.815s
 === RUN   TestUsageAndVersion
 --- PASS: TestUsageAndVersion (0.00s)
 === RUN   TestRecordShowReplayVerify
---- PASS: TestRecordShowReplayVerify (0.02s)
+--- PASS: TestRecordShowReplayVerify (0.03s)
 === RUN   TestBadArguments
 --- PASS: TestBadArguments (0.00s)
 === RUN   TestRecordWithoutDoubleDash
@@ -51,11 +69,12 @@ ok  	github.com/codeinstances/codeinstances	2.311s
 --- PASS: TestQuoteArgs (0.00s)
 === RUN   TestShowJSONIsTheFileItself
 --- PASS: TestShowJSONIsTheFileItself (0.00s)
+=== RUN   TestDiff
+--- PASS: TestDiff (0.03s)
 PASS
-ok  	github.com/codeinstances/codeinstances/cmd/codeinstances	0.877s
+ok  	github.com/codeinstances/codeinstances/cmd/codeinstances	0.916s
 === RUN   TestDemo
-2026/10/18 09:22:36 http: TLS handshake error from 127.0.0.1:42778: read tcp 127.0.0.1:40873->127.0.0.1:42778: read: connection reset by peer
-ok   record finishes and keeps the exit code exit 0 codeinstances: kept /tmp/codeinstances-demo-3194252551/demo.instance (a18c6dcb1076: /tmp/TestDemo1875544047/001/codeinstances-demo -child, exit 0, 23 calls, 5 values, 52 ms)
+ok   record finishes and keeps the exit code exit 0 codeinstances: kept /tmp/codeinstances-demo-2122108768/demo.instance (3c66da34099d: /tmp/TestDemo3362145107/001/codeinstances-demo -child, exit 0, 23 calls, 5 values, 66 ms)
 ok   every request reached the live servers and was kept 23 calls kept, 23 served live
 ok   hooked clock and random values were kept 5 values
 ok   secret headers are redacted Set-Cookie
@@ -63,13 +82,16 @@ ok   the program saw HTTPS and HTTP answers
 ok   live servers are down before replay 
 ok   3 replays offline all match the recording 
 ok   an extra request is caught request GET https://api.demo.test/quote?again=1 isn't in the recording
-ok   an unhooked clock is caught stdout line 1: recorded "started 2026-10-18T09:22:36.84631337+03:00", replayed "started 2026-10-18T09:22:37.096201178+03:00"
+ok   an unhooked clock is caught stdout line 1: recorded "started 2026-10-18T10:00:08.537372505+03:00", replayed "started 2026-10-18T10:00:08.949002394+03:00"
 ok   verify accepts the untouched file 
 ok   verify catches an edited file 
+ok   diff finds a run the same as itself 
+ok   diff finds the extra request in a second run 26 differences, 23 calls changed, 1 only in b
+ok   diff times every paired call 23 calls timed in both runs
 codeinstances-demo: every check passed
---- PASS: TestDemo (1.42s)
+--- PASS: TestDemo (1.91s)
 PASS
-ok  	github.com/codeinstances/codeinstances/examples/demo	1.421s
+ok  	github.com/codeinstances/codeinstances/examples/demo	1.910s
 === RUN   TestOutsideCodeinstancesTheValuesAreReal
 --- PASS: TestOutsideCodeinstancesTheValuesAreReal (0.01s)
 === RUN   TestRecordThenReplay
@@ -77,16 +99,16 @@ ok  	github.com/codeinstances/codeinstances/examples/demo	1.421s
 === RUN   TestReplayRunsOutAndSaysSo
 --- PASS: TestReplayRunsOutAndSaysSo (0.01s)
 === RUN   TestUnknownModeIsIgnored
---- PASS: TestUnknownModeIsIgnored (0.00s)
+--- PASS: TestUnknownModeIsIgnored (0.01s)
 === RUN   TestTransportTrustsTheRunAuthority
-2026/10/18 09:22:37 http: TLS handshake error from 127.0.0.1:52056: remote error: tls: bad certificate
+2026/10/18 10:00:09 http: TLS handshake error from 127.0.0.1:42224: remote error: tls: bad certificate
 --- PASS: TestTransportTrustsTheRunAuthority (0.01s)
 === RUN   TestIntnPanicsOnZero
 --- PASS: TestIntnPanicsOnZero (0.00s)
 === RUN   TestReplayedBytesOfAnotherLengthAreNotUsed
 --- PASS: TestReplayedBytesOfAnotherLengthAreNotUsed (0.01s)
 PASS
-ok  	github.com/codeinstances/codeinstances/hook	0.069s
+ok  	github.com/codeinstances/codeinstances/hook	0.088s
 === RUN   TestBodyTextAndBinary
 --- PASS: TestBodyTextAndBinary (0.00s)
 === RUN   TestSaveLoadRoundTrip
@@ -114,13 +136,15 @@ ok  	github.com/codeinstances/codeinstances/hook	0.069s
 --- PASS: TestDuplicateAndCaseVariantMembersAreRefused (0.00s)
 === RUN   TestValidateBodiesAndValues
 --- PASS: TestValidateBodiesAndValues (0.00s)
+=== RUN   TestCallDuration
+--- PASS: TestCallDuration (0.00s)
 PASS
-ok  	github.com/codeinstances/codeinstances/instance	0.011s
+ok  	github.com/codeinstances/codeinstances/instance	0.015s
 ?   	github.com/codeinstances/codeinstances/internal/buildinfo	[no test files]
 === RUN   TestIssueAndVerify
 --- PASS: TestIssueAndVerify (0.00s)
 PASS
-ok  	github.com/codeinstances/codeinstances/internal/ca	0.006s
+ok  	github.com/codeinstances/codeinstances/internal/ca	0.007s
 === RUN   TestRecordThenReplayHTTPAndHTTPS
 --- PASS: TestRecordThenReplayHTTPAndHTTPS (0.01s)
 === RUN   TestSecretsAreRedactedUnlessKept
@@ -132,22 +156,23 @@ ok  	github.com/codeinstances/codeinstances/internal/ca	0.006s
 === RUN   TestRepeatedRequestsReplayInOrder
 --- PASS: TestRepeatedRequestsReplayInOrder (0.01s)
 === RUN   TestConcurrentRequests
---- PASS: TestConcurrentRequests (0.25s)
+2026/10/18 10:00:09 http: TLS handshake error from 127.0.0.1:50870: EOF
+--- PASS: TestConcurrentRequests (0.32s)
 === RUN   TestStrictOrder
 --- PASS: TestStrictOrder (0.01s)
 === RUN   TestLargeBodies
---- PASS: TestLargeBodies (0.24s)
+--- PASS: TestLargeBodies (0.30s)
 === RUN   TestTooLargeBodyIsKeptAsAFailedCallAndReplayed
---- PASS: TestTooLargeBodyIsKeptAsAFailedCallAndReplayed (0.81s)
+--- PASS: TestTooLargeBodyIsKeptAsAFailedCallAndReplayed (0.71s)
 === RUN   TestRecordedRequestsLeaveOutConnectionHeaders
 --- PASS: TestRecordedRequestsLeaveOutConnectionHeaders (0.00s)
 === RUN   TestNonProxyRequestIsRefused
 --- PASS: TestNonProxyRequestIsRefused (0.00s)
 === RUN   TestCertificatesAreIssuedForTheRequestedHost
---- PASS: TestCertificatesAreIssuedForTheRequestedHost (0.01s)
+--- PASS: TestCertificatesAreIssuedForTheRequestedHost (0.02s)
 === RUN   TestCloseIsSafeTwiceAndRefusesLateRequests
---- PASS: TestCloseIsSafeTwiceAndRefusesLateRequests (0.00s)
+--- PASS: TestCloseIsSafeTwiceAndRefusesLateRequests (0.01s)
 === RUN   TestHelpers
 --- PASS: TestHelpers (0.00s)
 PASS
-ok  	github.com/codeinstances/codeinstances/internal/capture	1.369s
+ok  	github.com/codeinstances/codeinstances/internal/capture	1.435s
