@@ -1,8 +1,8 @@
 {
   "tool": {
-    "version": "0.2.0",
+    "version": "0.3.0",
     "format": "codeinstances/0",
-    "revision": "39838cf725f148109eb8556670c1b751a3562001",
+    "revision": "3e86c43ea7f9fa2cadba2ab50e622417763f508a",
     "modified": true,
     "go": "go1.24.7",
     "os": "linux",
@@ -13,7 +13,7 @@
     {
       "name": "record finishes and keeps the exit code",
       "passed": true,
-      "detail": "exit 0 codeinstances: kept /tmp/codeinstances-demo-1634311282/demo.instance (4b2db4361396: /tmp/tmp.T3454p8xGs/bin/codeinstances-demo -child, exit 0, 23 calls, 5 values, 49 ms)"
+      "detail": "exit 0 codeinstances: kept /tmp/codeinstances-demo-4067724872/demo.instance (ccfefc5101a8: /tmp/tmp.RnV9o2RhnG/bin/codeinstances-demo -child, exit 0, 23 calls, 5 values, 44 ms)"
     },
     {
       "name": "every request reached the live servers and was kept",
@@ -35,6 +35,11 @@
       "passed": true
     },
     {
+      "name": "a failing run is recorded",
+      "passed": true,
+      "detail": "exit 1"
+    },
+    {
       "name": "live servers are down before replay",
       "passed": true
     },
@@ -50,7 +55,7 @@
     {
       "name": "an unhooked clock is caught",
       "passed": true,
-      "detail": "stdout line 1: recorded \"started 2026-10-18T10:01:00.905586153+03:00\", replayed \"started 2026-10-18T10:01:01.455842683+03:00\""
+      "detail": "stdout line 1: recorded \"started 2026-10-18T10:32:49.804827138+03:00\", replayed \"started 2026-10-18T10:32:50.439534484+03:00\""
     },
     {
       "name": "verify accepts the untouched file",
@@ -67,31 +72,51 @@
     {
       "name": "diff finds the extra request in a second run",
       "passed": true,
-      "detail": "25 differences, 22 calls changed, 1 only in b"
+      "detail": "26 differences, 23 calls changed, 1 only in b"
     },
     {
       "name": "diff times every paired call",
       "passed": true,
       "detail": "23 calls timed in both runs"
+    },
+    {
+      "name": "shrink narrows the failure to item 7's answer",
+      "passed": true,
+      "detail": "1 of 22 differing answers needed, 10 runs"
+    },
+    {
+      "name": "test fails the build that still has the bug",
+      "passed": true,
+      "detail": "codeinstances: 1 of 2 tests passed"
+    },
+    {
+      "name": "test passes the fixed build",
+      "passed": true,
+      "detail": "codeinstances: 2 of 2 tests passed"
     }
   ],
   "passed": true,
   "calls": 23,
   "values": 5,
-  "instance_file_bytes": 20626,
-  "record_ms": 65,
+  "instance_file_bytes": 20617,
+  "record_ms": 58,
   "replay_ms": [
-    39,
-    38,
+    47,
+    42,
+    43,
+    40,
     36,
-    37,
-    34,
-    37,
-    35,
+    42,
     35,
     44,
-    43
+    35,
+    37
   ],
-  "diff_ms": 7,
+  "diff_ms": 8,
+  "shrink_ms": 339,
+  "shrink_runs": 10,
+  "shrink_answers_changed": 22,
+  "shrink_answers_needed": 1,
+  "test_ms": 79,
   "live_server_requests": 23
 }
